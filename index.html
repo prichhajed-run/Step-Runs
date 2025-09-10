@@ -1,193 +1,128 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <meta charset="utf-8">
-  <title>Run Tracker Prototype</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <meta charset="UTF-8">
+  <title>Run Tracker</title>
   <style>
-    body { margin: 0; padding: 0; font-family: Arial, sans-serif; background: #f9f9f9; text-align: center; }
-    h1 { margin: 10px; color: darkblue; }
-    .stats { margin: 4px 0; font-size: 16px; }
-    button { padding: 8px 15px; margin: 6px; font-size: 14px; border: none; border-radius: 5px; background: #007bff; color: white; }
-    button:active { background: #0056b3; }
-    #map { height: 50vh; margin-top: 8px; border: 2px solid #333; }
-    #splits { margin-top: 10px; font-size: 14px; }
+    body { font-family: Arial, sans-serif; margin: 0; padding: 0; text-align: center; }
+    #map { height: 300px; margin: 10px; }
+    .stats { margin: 5px; font-size: 18px; }
+    button { margin: 10px; padding: 10px 20px; font-size: 16px; }
   </style>
-
   <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
 </head>
 <body>
-  <h1>🏃 Run Tracker</h1>
+  <h2>🏃 Run Tracker</h2>
 
-  <div class="stats" id="status">Press Start to begin...</div>
-  <div class="stats">Distance: <span id="distance">0</span> km</div>
   <div class="stats">Time: <span id="time">0:00</span></div>
-  <div class="stats">Live Pace: <span id="livepace">0:00</span> min/km</div>
-  <div class="stats">Avg Pace: <span id="avgpace">0:00</span> min/km</div>
+  <div class="stats">Distance: <span id="distance">0.00</span> km</div>
+  <div class="stats">Pace: <span id="pace">0:00</span> min/km</div>
   <div class="stats">Steps: <span id="steps">0</span></div>
-  <div class="stats">Lat: <span id="lat">-</span> | Lon: <span id="lon">-</span></div>
-
-  <button onclick="startRun()">▶ Start</button>
-  <button onclick="pauseRun()">⏸ Pause</button>
-  <button onclick="resetRun()">🔄 Reset</button>
-  <button onclick="saveSummary()">📸 Save Summary</button>
+  <div class="stats">Avg Cadence: <span id="cadence">0</span> spm</div>
+  <div class="stats">Avg Stride: <span id="stride">0</span> cm</div>
+  <div class="stats">Place: <span id="place">-</span></div>
 
   <div id="map"></div>
-  <div id="splits"></div>
 
-  <!-- Leaflet JS -->
+  <button onclick="startRun()">▶ Start</button>
+  <button onclick="stopRun()">⏹ Stop</button>
+  <button onclick="saveSummary()">💾 Save Summary</button>
+
   <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
-  <!-- leaflet-image for saving maps -->
   <script src="https://unpkg.com/leaflet-image/leaflet-image.js"></script>
-  <!-- html2canvas for stats -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 
   <script>
-    let watchId, running = false, paused = false;
+    let map, path, watchId;
+    let distance = 0, lastLatLng = null;
     let startTime, elapsed = 0;
-    let distance = 0, lastPos = null, lastUpdateTime = null;
-    let timerInterval, map, path;
+    let stepCount = 0;
+    let stepListener = null;
 
-    let stepCount = 0, lastStepTime = 0;
-    let splits = [], lastKm = 0;
-
-    // Format mm:ss
-    function formatPace(minPerKm) {
-      if (!isFinite(minPerKm) || minPerKm <= 0) return "0:00";
-      let mins = Math.floor(minPerKm);
-      let secs = Math.round((minPerKm - mins) * 60);
-      if (secs === 60) { mins++; secs = 0; }
-      return (mins < 10 ? "0" : "") + mins + ":" + (secs < 10 ? "0" : "") + secs;
-    }
-
-    function enableMotion() {
-      if (typeof DeviceMotionEvent.requestPermission === 'function') {
-        DeviceMotionEvent.requestPermission()
-          .then(res => { if (res === 'granted') startStepCounter(); else alert("Motion permission denied"); })
-          .catch(console.error);
-      } else {
-        startStepCounter(); // Android
-      }
-    }
-
-    function startStepCounter() {
-      window.addEventListener("devicemotion", event => {
-        let ax = event.acceleration.x || 0;
-        let ay = event.acceleration.y || 0;
-        let az = event.acceleration.z || 0;
-        let magnitude = Math.sqrt(ax*ax + ay*ay + az*az);
-
-        if (magnitude > 2 && Date.now() - lastStepTime > 400) {
-          stepCount++;
-          lastStepTime = Date.now();
-          document.getElementById("steps").innerText = stepCount;
-        }
-      });
+    function initMap() {
+      map = L.map('map').setView([20.5937, 78.9629], 5);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19
+      }).addTo(map);
+      path = L.polyline([], { color: 'blue' }).addTo(map);
     }
 
     function startRun() {
-      enableMotion();
-
-      if (running && paused) { 
-        paused = false; 
-        startTime = Date.now() - elapsed;
-        timerInterval = setInterval(updateTime, 1000);
-        return;
-      }
-      if (running) return;
-
-      running = true; paused = false;
-      distance = 0; elapsed = 0; lastPos = null; lastUpdateTime = null;
-      stepCount = 0; lastKm = 0; splits = [];
-      document.getElementById("steps").innerText = 0;
-      document.getElementById("splits").innerHTML = "";
+      distance = 0; stepCount = 0; elapsed = 0;
+      lastLatLng = null; path.setLatLngs([]);
       startTime = Date.now();
-      document.getElementById("status").innerText = "Tracking...";
+      document.getElementById("steps").innerText = 0;
+      document.getElementById("distance").innerText = "0.00";
+      document.getElementById("pace").innerText = "0:00";
+      document.getElementById("cadence").innerText = 0;
+      document.getElementById("stride").innerText = 0;
+      document.getElementById("place").innerText = "-";
 
-      if (!map) {
-        map = L.map('map').setView([0, 0], 16);
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
-        path = L.polyline([], {color: 'red'}).addTo(map);
-      }
+      // Track GPS
+      watchId = navigator.geolocation.watchPosition(updatePosition);
 
-      timerInterval = setInterval(updateTime, 1000);
-
-      if (navigator.geolocation) {
-        watchId = navigator.geolocation.watchPosition(pos => {
-          const lat = pos.coords.latitude;
-          const lon = pos.coords.longitude;
-          document.getElementById("lat").innerText = lat.toFixed(5);
-          document.getElementById("lon").innerText = lon.toFixed(5);
-
-          let newPoint = [lat, lon];
-          path.addLatLng(newPoint);
-          map.setView(newPoint);
-
-          if (lastPos) {
-            let d = haversine(lastPos.lat, lastPos.lon, lat, lon);
-            let now = Date.now();
-            let deltaTime = (now - lastUpdateTime) / 1000;
-
-            if (d > 0.003) { // >3m
-              distance += d;
-              document.getElementById("distance").innerText = distance.toFixed(2);
-
-              let livePace = (deltaTime / d) / 60;
-              document.getElementById("livepace").innerText = formatPace(livePace);
-
-              let totalMins = (elapsed / 1000) / 60;
-              if (distance > 0) {
-                let avgPace = totalMins / distance;
-                document.getElementById("avgpace").innerText = formatPace(avgPace);
-              }
-
-              if (Math.floor(distance) > lastKm) {
-                let km = Math.floor(distance);
-                let pace = totalMins / km;
-                splits.push({ km, pace });
-                lastKm = km;
-                updateSplitsUI();
-              }
-            }
-            lastUpdateTime = now;
-          } else {
-            lastUpdateTime = Date.now();
+      // Track steps (motion sensor)
+      if (window.DeviceMotionEvent) {
+        stepListener = function(event) {
+          let acc = event.accelerationIncludingGravity;
+          if (acc.x > 12 || acc.y > 12 || acc.z > 12) {
+            stepCount++;
+            document.getElementById("steps").innerText = stepCount;
           }
-          lastPos = { lat, lon };
-        }, err => {
-          document.getElementById("status").innerText = "GPS error: " + err.message;
-        }, { enableHighAccuracy: true });
-      } else {
-        alert("Geolocation not supported on this device.");
+        };
+        window.addEventListener("devicemotion", stepListener);
       }
+
+      // Timer update
+      timer = setInterval(updateTime, 1000);
     }
 
-    function pauseRun() {
-      if (running && !paused) {
-        paused = true;
-        clearInterval(timerInterval);
-        if (watchId) navigator.geolocation.clearWatch(watchId);
-        elapsed = Date.now() - startTime;
-        document.getElementById("status").innerText = "Paused";
-      }
+    function stopRun() {
+      navigator.geolocation.clearWatch(watchId);
+      if (stepListener) window.removeEventListener("devicemotion", stepListener);
+      clearInterval(timer);
     }
 
-    function resetRun() {
-      running = false; paused = false;
-      clearInterval(timerInterval);
-      if (watchId) navigator.geolocation.clearWatch(watchId);
-      distance = 0; elapsed = 0; lastPos = null; lastUpdateTime = null;
-      stepCount = 0; splits = []; lastKm = 0;
-      document.getElementById("status").innerText = "Press Start to begin...";
-      document.getElementById("distance").innerText = "0";
-      document.getElementById("time").innerText = "0:00";
-      document.getElementById("livepace").innerText = "0:00";
-      document.getElementById("avgpace").innerText = "0:00";
-      document.getElementById("steps").innerText = "0";
-      document.getElementById("lat").innerText = "-";
-      document.getElementById("lon").innerText = "-";
-      document.getElementById("splits").innerHTML = "";
-      if (map) { map.remove(); map = null; }
+    function updatePosition(pos) {
+      let lat = pos.coords.latitude;
+      let lon = pos.coords.longitude;
+      let latlng = [lat, lon];
+
+      if (lastLatLng) {
+        distance += map.distance(lastLatLng, latlng) / 1000;
+        document.getElementById("distance").innerText = distance.toFixed(2);
+
+        // Pace in min/km
+        let mins = (elapsed / 1000) / 60;
+        if (distance > 0) {
+          let pace = mins / distance;
+          let paceMin = Math.floor(pace);
+          let paceSec = Math.round((pace - paceMin) * 60);
+          if (paceSec < 10) paceSec = "0" + paceSec;
+          document.getElementById("pace").innerText = paceMin + ":" + paceSec;
+        }
+      }
+
+      lastLatLng = latlng;
+      path.addLatLng(latlng);
+      map.setView(latlng, 16);
+
+      // Place name (reverse geocode once every update)
+      fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}`)
+        .then(r => r.json())
+        .then(data => {
+          document.getElementById("place").innerText = data.display_name || "Unknown";
+        });
+    }
+
+    function updateMetrics() {
+      if (elapsed > 0 && stepCount > 0) {
+        let cadence = stepCount / ((elapsed / 1000) / 60);
+        document.getElementById("cadence").innerText = cadence.toFixed(0);
+
+        let stride = (distance * 1000) / stepCount * 100; // cm
+        document.getElementById("stride").innerText = stride.toFixed(0);
+      }
     }
 
     function updateTime() {
@@ -196,41 +131,34 @@
       let mins = Math.floor(secs / 60);
       secs = secs % 60;
       document.getElementById("time").innerText = mins + ":" + (secs < 10 ? "0" : "") + secs;
-    }
-
-    function updateSplitsUI() {
-      let html = "<h3>Splits</h3>";
-      splits.forEach(s => {
-        html += `KM ${s.km}: ${formatPace(s.pace)} min/km<br>`;
-      });
-      document.getElementById("splits").innerHTML = html;
+      updateMetrics();
     }
 
     function saveSummary() {
-      leafletImage(map, function(err, canvas) {
+      leafletImage(map, function(err, mapCanvas) {
         if (err) return console.error(err);
 
-        // Add map image below stats
-        let statsNode = document.body.cloneNode(true);
-        statsNode.querySelector("#map").innerHTML = "";
-        statsNode.querySelector("#map").appendChild(canvas);
+        // Stats screenshot (ignore map to avoid duplication)
+        html2canvas(document.body, { ignoreElements: el => el.id === "map" }).then(statsCanvas => {
+          let finalCanvas = document.createElement("canvas");
+          finalCanvas.width = statsCanvas.width;
+          finalCanvas.height = statsCanvas.height + mapCanvas.height;
 
-        html2canvas(statsNode).then(c => {
+          let ctx = finalCanvas.getContext("2d");
+          ctx.drawImage(statsCanvas, 0, 0);
+          ctx.drawImage(mapCanvas, 0, statsCanvas.height);
+
           let link = document.createElement("a");
           link.download = "workout_summary.png";
-          link.href = c.toDataURL();
+          link.href = finalCanvas.toDataURL("image/png");
           link.click();
         });
       });
     }
 
-    function haversine(lat1, lon1, lat2, lon2) {
-      const R = 6371, toRad = x => x * Math.PI / 180;
-      let dLat = toRad(lat2 - lat1), dLon = toRad(lon2 - lon1);
-      let a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)**2;
-      return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-    }
+    initMap();
   </script>
 </body>
 </html>
+
 
