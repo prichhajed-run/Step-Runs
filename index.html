@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Run Tracker — Robust Reset</title>
+<title>Run Tracker — 100m Splits</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
 <style>
   body { font-family: Arial, sans-serif; margin:0; padding:12px; background:#f7f7f7; color:#111; }
@@ -46,7 +46,7 @@
   <div id="map" class="panel"></div>
 
   <div id="splits" class="panel">
-    <h3>Splits</h3>
+    <h3>Splits (100m)</h3>
     <div id="splitsList" class="small">No splits yet</div>
   </div>
 
@@ -59,8 +59,8 @@ let map=null, path=null, watchId=null;
 let running=false, paused=false, startTime=0, elapsed=0, timer=null;
 let lastPos=null, lastUpdateTime=null;
 let gpsDistance=0, blendedDistance=0;
-let stepCount=0, lastStepTime=0;
-let splits=[], lastKm=0;
+let stepCount=0, lastStepTime=0, lastAccel=0;
+let splits=[], lastSplit=0;
 let defaultStride=0.78; // meters
 let estimatedStride=defaultStride;
 
@@ -102,15 +102,24 @@ function updateUIAll(){
 /* --- Splits --- */
 function renderSplits(){
   let html='';
-  splits.forEach(s=>{ html+=`Km ${s.km}: ${mmss(s.pace)} min/km<br>`; });
+  splits.forEach(s=>{ html+=`${s.m} m: ${mmss(s.pace)} min/km<br>`; });
   document.getElementById('splitsList').innerHTML = html || 'No splits yet';
 }
 
-/* --- Steps --- */
+/* --- Steps (better filtering) --- */
 function handleMotion(e){
   const acc=e.accelerationIncludingGravity||{x:0,y:0,z:0};
   let mag=Math.sqrt((acc.x||0)**2+(acc.y||0)**2+(acc.z||0)**2);
-  if(mag>1.8 && Date.now()-lastStepTime>350){ stepCount++; lastStepTime=Date.now(); }
+
+  // simple high-pass filter to reduce drift
+  let delta = Math.abs(mag - lastAccel);
+  lastAccel = mag;
+
+  // Thresholds tuned: ignore tiny vibrations, ignore rapid repeats
+  if(delta>1.2 && mag>9.5 && Date.now()-lastStepTime>350){ 
+    stepCount++; 
+    lastStepTime=Date.now(); 
+  }
 }
 
 /* --- Start / Pause / Reset --- */
@@ -140,7 +149,8 @@ function startRun(){
   startTime = Date.now(); elapsed = 0;
   lastPos = null; lastUpdateTime = null;
   gpsDistance = 0; blendedDistance = 0;
-  stepCount = 0; lastStepTime = 0; splits = []; lastKm = 0; estimatedStride = defaultStride;
+  stepCount = 0; lastStepTime = 0; lastAccel = 0;
+  splits = []; lastSplit = 0; estimatedStride = defaultStride;
   path.setLatLngs([]);
   updateUIAll(); renderSplits();
 
@@ -176,7 +186,7 @@ function resetRun(){
   if (watchId) { navigator.geolocation.clearWatch(watchId); watchId = null; }
   window.removeEventListener('devicemotion', handleMotion);
   elapsed = 0; lastPos = null; lastUpdateTime = null;
-  gpsDistance = 0; blendedDistance = 0; stepCount = 0; splits = []; lastKm = 0; estimatedStride = defaultStride;
+  gpsDistance = 0; blendedDistance = 0; stepCount = 0; splits = []; lastSplit = 0; estimatedStride = defaultStride;
   path.setLatLngs([]);
   updateUIAll(); renderSplits();
   document.getElementById('btnStart').innerText = "▶ Start";
@@ -202,12 +212,12 @@ function onPosition(pos){
   path.addLatLng([lat,lon]);
   map.setView([lat,lon],16);
 
-  // splits
-  if(Math.floor(blendedDistance/1000)>lastKm){
-    let newKm=Math.floor(blendedDistance/1000);
-    let totalMins=(Date.now()-startTime)/60000;
-    splits.push({ km:newKm, pace: totalMins/newKm });
-    lastKm=newKm; renderSplits();
+  // 100m splits
+  if(Math.floor(blendedDistance/100) > lastSplit){
+    let newSplit = Math.floor(blendedDistance/100);
+    let totalMins = (Date.now()-startTime)/60000;
+    splits.push({ m:newSplit*100, pace: totalMins/(blendedDistance/1000) });
+    lastSplit=newSplit; renderSplits();
   }
   lastPos={lat,lon}; lastUpdateTime=now;
 }
@@ -215,7 +225,7 @@ function onPosition(pos){
 /* --- Error --- */
 function onError(err){ console.warn(err.message); }
 
-/* --- Save summary (map + stats + splits) --- */
+/* --- Save summary --- */
 function saveSummary(){
   leafletImage(map, function(err, canvasMap){
     html2canvas(document.body).then(canvas=>{
@@ -229,3 +239,4 @@ function saveSummary(){
 </script>
 </body>
 </html>
+
