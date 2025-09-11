@@ -3,238 +3,302 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Run Tracker — 100m Splits</title>
+<title>Run Tracker — Graphs & Splits</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
 <style>
-  body { font-family: Arial, sans-serif; margin:0; padding:12px; background:#f7f7f7; color:#111; }
-  h1 { margin:0 0 8px 0; font-size:20px; color: #0a4; text-align:center; }
-  .panel { background: #fff; border-radius:8px; padding:10px; box-shadow:0 1px 4px rgba(0,0,0,0.08); margin-bottom:10px; }
-  .stats-row { display:flex; flex-wrap:wrap; gap:8px; justify-content:center; align-items:center; }
-  .stat { min-width:110px; padding:8px 10px; border-radius:6px; background:#fafafa; font-size:14px; text-align:center; box-shadow:0 0 0 1px rgba(0,0,0,0.03) inset; }
-  .controls { text-align:center; margin-top:8px; }
-  button { margin:6px 6px; padding:10px 14px; font-size:15px; border-radius:7px; border:none; background:#007bff; color:white; cursor:pointer; }
-  button.secondary { background:#6c757d; }
-  #map { height:360px; margin-top:10px; border-radius:8px; overflow:hidden; border:1px solid #ddd; }
-  #splits { margin-top:10px; padding:8px; background:#fff; border-radius:8px; color:#111; font-size:14px; text-align:left; max-height:140px; overflow:auto; border:1px solid #eee; }
-  #splits h3 { margin:0 0 6px 0; font-size:15px; }
-  .small { font-size:12px; color:#555; }
+body { font-family: Arial, sans-serif; margin:0; padding:12px; background:#f7f7f7; color:#111; }
+h1 { text-align:center; color:#0a4; margin:0 0 10px 0; }
+.controls { text-align:center; margin-bottom:8px; }
+button { margin:6px 6px; padding:10px 14px; font-size:15px; border-radius:7px; border:none; background:#007bff; color:white; cursor:pointer; }
+button.secondary { background:#6c757d; }
+#map { height:360px; border-radius:8px; overflow:hidden; border:1px solid #ddd; margin-bottom:10px; }
+.tabs { display:flex; margin-bottom:10px; }
+.tab { flex:1; padding:10px; text-align:center; cursor:pointer; background:#eee; border-radius:6px 6px 0 0; margin-right:2px; }
+.tab.active { background:#fff; border-bottom:1px solid #fff; }
+.tab-content { background:#fff; border-radius:0 0 8px 8px; padding:10px; min-height:200px; border:1px solid #ddd; }
+.stats-row { display:flex; flex-wrap:wrap; gap:8px; justify-content:center; }
+.stat { min-width:110px; padding:8px 10px; border-radius:6px; background:#fafafa; font-size:14px; text-align:center; box-shadow:0 0 0 1px rgba(0,0,0,0.03) inset; }
+#splitsList { font-size:12px; color:#555; max-height:140px; overflow:auto; }
+.chart-wrap { width:100%; height:200px; margin-bottom:12px; }
+canvas.chart-canvas { width:100% !important; height:100% !important; display:block; }
+@media (max-width:520px){ #map{height:240px;} .stat{min-width:90px; font-size:13px;} }
 </style>
 </head>
 <body>
-  <h1>🏃 Run Tracker</h1>
 
-  <!-- Top panel: stats + controls -->
-  <div class="panel" id="statsPanel">
-    <div class="stats-row">
-      <div class="stat">Time<br><strong id="time">0:00</strong></div>
-      <div class="stat">Distance<br><strong id="distance">0.00</strong> km</div>
-      <div class="stat">Live Pace<br><strong id="livepace">0:00</strong> min/km</div>
-      <div class="stat">Avg Pace<br><strong id="avgpace">0:00</strong> min/km</div>
-      <div class="stat">Steps<br><strong id="steps">0</strong></div>
-      <div class="stat">Avg Cadence<br><strong id="cadence">0</strong> spm</div>
-      <div class="stat">Avg Stride<br><strong id="stride">0</strong> cm</div>
-    </div>
+<h1>🏃 Run Tracker</h1>
 
-    <div class="controls">
-      <button id="btnStart">▶ Start</button>
-      <button id="btnPause" class="secondary">⏸ Pause</button>
-      <button id="btnReset" class="secondary">🔄 Reset</button>
-      <button id="btnSave">📸 Save Summary</button>
-    </div>
+<div class="controls">
+  <button id="btnStart">▶ Start</button>
+  <button id="btnPause" class="secondary">⏸ Pause</button>
+  <button id="btnReset" class="secondary">🔄 Reset</button>
+  <button id="btnSave">📸 Save Summary</button>
+</div>
+
+<div id="map"></div>
+
+<div class="tabs">
+  <div class="tab active" data-tab="stats">Stats</div>
+  <div class="tab" data-tab="graphs">Graphs</div>
+  <div class="tab" data-tab="splits">Splits</div>
+</div>
+
+<div id="stats" class="tab-content">
+  <div class="stats-row">
+    <div class="stat">Time<br><strong id="time">0:00</strong></div>
+    <div class="stat">Distance<br><strong id="distance">0.00</strong> km</div>
+    <div class="stat">Live Pace<br><strong id="livepace">0:00</strong> min/km</div>
+    <div class="stat">Avg Pace<br><strong id="avgpace">0:00</strong> min/km</div>
+    <div class="stat">Steps<br><strong id="steps">0</strong></div>
+    <div class="stat">Avg Cadence<br><strong id="cadence">0</strong> spm</div>
+    <div class="stat">Avg Stride<br><strong id="stride">0</strong> cm</div>
+    <div class="stat">Elev Gain<br><strong id="elevation">0</strong> m</div>
   </div>
+</div>
 
-  <div id="map" class="panel"></div>
+<div id="graphs" class="tab-content" style="display:none;">
+  <div class="chart-wrap"><canvas id="distanceChart" class="chart-canvas"></canvas></div>
+  <div class="chart-wrap"><canvas id="timeChart" class="chart-canvas"></canvas></div>
+</div>
 
-  <div id="splits" class="panel">
-    <h3>Splits (100m)</h3>
-    <div id="splitsList" class="small">No splits yet</div>
-  </div>
+<div id="splits" class="tab-content" style="display:none;">
+  <div id="splitsList">No splits yet</div>
+</div>
 
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
-<script src="https://unpkg.com/leaflet-image/leaflet-image.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <script>
-/* --- Variables --- */
-let map=null, path=null, watchId=null;
+/* --------------------------
+   Map
+-------------------------- */
+let map = L.map('map', { attributionControl:false }).setView([20.5937,78.9629],5);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{ maxZoom:19 }).addTo(map);
+let path = L.polyline([], { color:'red', weight:4, opacity:0.9 }).addTo(map);
+
+/* --------------------------
+   State
+-------------------------- */
 let running=false, paused=false, startTime=0, elapsed=0, timer=null;
 let lastPos=null, lastUpdateTime=null;
 let gpsDistance=0, blendedDistance=0;
 let stepCount=0, lastStepTime=0, lastAccel=0;
-let splits=[], lastSplit=0;
-let defaultStride=0.78; // meters
-let estimatedStride=defaultStride;
+let splits=[], lastSplit=0, lastSplitTime=0;
+let defaultStride=0.78, estimatedStride=defaultStride;
+let elevationGain=0, lastAltitude=null;
+let watchId=null;
+let recentDistances=[]; // for live pace
+const LIVE_PACE_WINDOW=10; // meters
 
-/* --- Init map --- */
-map = L.map('map', { attributionControl:false }).setView([20.5937,78.9629],5);
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{ maxZoom:19 }).addTo(map);
-path = L.polyline([], { color:'red', weight:4, opacity:0.9 }).addTo(map);
+/* --------------------------
+   Charts
+-------------------------- */
+const distanceCtx=document.getElementById('distanceChart').getContext('2d');
+const timeCtx=document.getElementById('timeChart').getContext('2d');
 
-/* --- Helpers --- */
-function haversine_m(lat1, lon1, lat2, lon2){
-  const R=6371000;
-  const toRad=x=>x*Math.PI/180;
-  let dLat=toRad(lat2-lat1), dLon=toRad(lon2-lon1);
-  let a=Math.sin(dLat/2)**2 + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)**2;
-  return R*2*Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-}
-function mmss(p){ 
-  let m=Math.floor(p), s=Math.round((p-m)*60); 
-  if(s===60){ m++; s=0;} 
-  return (m<10?'0'+m:m)+':'+(s<10?'0'+s:s); 
-}
+const distanceChart = new Chart(distanceCtx,{
+  type:'line',
+  data:{ labels:[], datasets:[{ label:'Pace (min/km)', data:[], borderColor:'#1f77b4', tension:0.3, fill:false }] },
+  options:{ responsive:true, maintainAspectRatio:false,
+    scales:{ x:{ title:{ display:true, text:'Distance (m)'} }, y:{ title:{ display:true, text:'Pace (min/km)'} } }
+  }
+});
+const timeChart = new Chart(timeCtx,{
+  type:'line',
+  data:{ labels:[], datasets:[{ label:'Pace (min/km)', data:[], borderColor:'#2ca02c', tension:0.3, fill:false }] },
+  options:{ responsive:true, maintainAspectRatio:false,
+    scales:{ x:{ title:{ display:true, text:'Time (min)'} }, y:{ title:{ display:true, text:'Pace (min/km)'} } }
+  }
+});
 
-/* --- Update UI --- */
+/* --------------------------
+   Tabs
+-------------------------- */
+document.querySelectorAll('.tab').forEach(tab=>{
+  tab.onclick=()=>{
+    document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(c=>c.style.display='none');
+    tab.classList.add('active');
+    const el=document.getElementById(tab.dataset.tab);
+    el.style.display='block';
+    if(tab.dataset.tab==='graphs'){
+      setTimeout(()=>{ distanceChart.resize(); distanceChart.update(); timeChart.resize(); timeChart.update(); },150);
+    }
+    if(tab.dataset.tab==='stats') setTimeout(()=>map.invalidateSize(),200);
+  }
+});
+
+/* --------------------------
+   Helpers
+-------------------------- */
+function pad2(n){ return (n<10?'0':'')+n; }
+function formatSeconds(sec){ sec=Math.round(sec); let m=Math.floor(sec/60), s=sec%60; return pad2(m)+':'+pad2(s); }
+function mmssFromMinutes(mins){ let m=Math.floor(mins), s=Math.round((mins-m)*60); return pad2(m)+':'+pad2(s); }
+
+/* --------------------------
+   UI
+-------------------------- */
 function updateUIAll(){
-  document.getElementById('time').innerText = mmss(elapsed/60000);
-  document.getElementById('distance').innerText = (blendedDistance/1000).toFixed(2);
-  let mins = elapsed/60000;
-  let livePaceMpk = (blendedDistance>0)?(elapsed/1000/60)/(blendedDistance/1000):0;
-  let avgPaceMpk = (blendedDistance>0)?(mins/(blendedDistance/1000)):0;
-  document.getElementById('livepace').innerText = mmss(livePaceMpk);
-  document.getElementById('avgpace').innerText = mmss(avgPaceMpk);
-  document.getElementById('steps').innerText = stepCount;
-  let cadence = (elapsed>0)?stepCount/(elapsed/60000):0;
-  document.getElementById('cadence').innerText = Math.round(cadence);
-  let stride = (stepCount>0)?((blendedDistance/stepCount)*100):0;
-  document.getElementById('stride').innerText = Math.round(stride);
+  document.getElementById('time').innerText=formatSeconds(elapsed/1000);
+  document.getElementById('distance').innerText=(blendedDistance/1000).toFixed(2);
+
+  let avgPace=(blendedDistance>0)?(elapsed/60000)/(blendedDistance/1000):0;
+  document.getElementById('avgpace').innerText=avgPace>0?mmssFromMinutes(avgPace):'0:00';
+
+  let livePace=avgPace;
+  let totalRecentDist=0,totalRecentTime=0;
+  for(let j=recentDistances.length-1;j>=0;j--){
+    totalRecentDist+=recentDistances[j].d;
+    totalRecentTime+=recentDistances[j].t;
+    if(totalRecentDist>=LIVE_PACE_WINDOW) break;
+  }
+  if(totalRecentDist>0) livePace=(totalRecentTime/60000)/(totalRecentDist/1000);
+  document.getElementById('livepace').innerText=livePace>0?mmssFromMinutes(livePace):'0:00';
+
+  document.getElementById('steps').innerText=stepCount;
+  document.getElementById('cadence').innerText=Math.round(elapsed>0?stepCount/(elapsed/60000):0);
+  document.getElementById('stride').innerText=Math.round(stepCount>0?blendedDistance/stepCount*100:0);
+  document.getElementById('elevation').innerText=Math.round(elevationGain);
 }
 
-/* --- Splits --- */
 function renderSplits(){
   let html='';
-  splits.forEach(s=>{ html+=`${s.m} m: ${mmss(s.pace)} min/km<br>`; });
-  document.getElementById('splitsList').innerHTML = html || 'No splits yet';
+  if(splits.length===0) html='No splits yet';
+  else{
+    for(let i=splits.length-1;i>=0;i--){
+      const s=splits[i];
+      html+=`<div style="margin-bottom:6px;">${s.m} m — <strong>${formatSeconds(s.time)}</strong> — Steps: ${s.steps}</div>`;
+    }
+  }
+  document.getElementById('splitsList').innerHTML=html;
 }
 
-/* --- Steps (better filtering) --- */
+/* --------------------------
+   Motion
+-------------------------- */
 function handleMotion(e){
   const acc=e.accelerationIncludingGravity||{x:0,y:0,z:0};
   let mag=Math.sqrt((acc.x||0)**2+(acc.y||0)**2+(acc.z||0)**2);
-
-  // simple high-pass filter to reduce drift
-  let delta = Math.abs(mag - lastAccel);
-  lastAccel = mag;
-
-  // Thresholds tuned: ignore tiny vibrations, ignore rapid repeats
-  if(delta>1.2 && mag>9.5 && Date.now()-lastStepTime>350){ 
-    stepCount++; 
-    lastStepTime=Date.now(); 
+  let delta=Math.abs(mag-lastAccel); lastAccel=mag;
+  if(delta>1.2 && mag>9 && Date.now()-lastStepTime>300){
+    stepCount++; lastStepTime=Date.now();
   }
 }
 
-/* --- Start / Pause / Reset --- */
-document.getElementById('btnStart').onclick = startRun;
-document.getElementById('btnPause').onclick = pauseRun;
-document.getElementById('btnReset').onclick = resetRun;
-document.getElementById('btnSave').onclick = saveSummary;
+/* --------------------------
+   Run control
+-------------------------- */
+document.getElementById('btnStart').onclick=startRun;
+document.getElementById('btnPause').onclick=pauseRun;
+document.getElementById('btnReset').onclick=resetRun;
+document.getElementById('btnSave').onclick=()=>{ html2canvas(document.body).then(c=>{ let a=document.createElement('a'); a.href=c.toDataURL(); a.download='summary.png'; a.click(); }); }
 
 function startRun(){
-  if (running && paused) {
-    // Resume
-    paused = false;
-    startTime = Date.now() - elapsed;
-    timer = setInterval(() => {
-      elapsed = Date.now() - startTime;
-      updateUIAll();
-    }, 1000);
-    if (navigator.geolocation && !watchId) {
-      watchId = navigator.geolocation.watchPosition(onPosition, onError, {enableHighAccuracy:true, maxAge:1000, timeout:10000});
-    }
-    document.getElementById('btnStart').innerText = "▶ Start";
-    return;
+  if(running && paused){
+    paused=false; startTime=Date.now()-elapsed;
+    timer=setInterval(()=>{ elapsed=Date.now()-startTime; updateUIAll(); },1000);
+    setupMotionListener(); setupGeolocationWatch(); return;
   }
-
-  // Fresh start
-  running = true; paused = false;
-  startTime = Date.now(); elapsed = 0;
-  lastPos = null; lastUpdateTime = null;
-  gpsDistance = 0; blendedDistance = 0;
-  stepCount = 0; lastStepTime = 0; lastAccel = 0;
-  splits = []; lastSplit = 0; estimatedStride = defaultStride;
+  running=true; paused=false; startTime=Date.now(); elapsed=0;
+  lastPos=null; gpsDistance=0; blendedDistance=0; stepCount=0;
+  splits=[]; lastSplit=0; lastSplitTime=0; estimatedStride=defaultStride;
+  elevationGain=0; lastAltitude=null; recentDistances=[];
   path.setLatLngs([]);
-  updateUIAll(); renderSplits();
-
-  if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission==='function') {
-    DeviceMotionEvent.requestPermission().then(res => { 
-      if (res === 'granted') window.addEventListener('devicemotion', handleMotion);
-    });
-  } else { 
-    window.addEventListener('devicemotion', handleMotion); 
-  }
-
-  if (navigator.geolocation) {
-    watchId = navigator.geolocation.watchPosition(onPosition, onError, {enableHighAccuracy:true, maxAge:1000, timeout:10000});
-  }
-
-  timer = setInterval(() => {
-    elapsed = Date.now() - startTime;
-    updateUIAll();
-  }, 1000);
+  distanceChart.data.labels=[]; distanceChart.data.datasets[0].data=[]; distanceChart.update();
+  timeChart.data.labels=[]; timeChart.data.datasets[0].data=[]; timeChart.update();
+  renderSplits(); updateUIAll();
+  setupMotionListener(); setupGeolocationWatch();
+  timer=setInterval(()=>{ elapsed=Date.now()-startTime; updateUIAll(); },1000);
 }
 
 function pauseRun(){
-  if (!running || paused) return;
-  paused = true;
-  clearInterval(timer);
-  if (watchId) { navigator.geolocation.clearWatch(watchId); watchId = null; }
-  document.getElementById('btnStart').innerText = "▶ Resume";
+  if(!running||paused) return;
+  paused=true; clearInterval(timer); timer=null;
+  removeMotionListener(); clearGeoWatch();
 }
 
 function resetRun(){
-  running = false; paused = false;
-  clearInterval(timer);
-  if (watchId) { navigator.geolocation.clearWatch(watchId); watchId = null; }
-  window.removeEventListener('devicemotion', handleMotion);
-  elapsed = 0; lastPos = null; lastUpdateTime = null;
-  gpsDistance = 0; blendedDistance = 0; stepCount = 0; splits = []; lastSplit = 0; estimatedStride = defaultStride;
+  running=false; paused=false; clearInterval(timer); timer=null;
+  removeMotionListener(); clearGeoWatch();
+  lastPos=null; lastUpdateTime=null; gpsDistance=0; blendedDistance=0;
+  stepCount=0; splits=[]; lastSplit=0; lastSplitTime=0;
+  estimatedStride=defaultStride; elevationGain=0; lastAltitude=null; recentDistances=[];
   path.setLatLngs([]);
+  distanceChart.data.labels=[]; distanceChart.data.datasets[0].data=[]; distanceChart.update();
+  timeChart.data.labels=[]; timeChart.data.datasets[0].data=[]; timeChart.update();
   updateUIAll(); renderSplits();
-  document.getElementById('btnStart').innerText = "▶ Start";
+  map.setView([20.5937,78.9629],5);
 }
 
-/* --- GPS --- */
+function setupMotionListener(){
+  try{
+    if(typeof DeviceMotionEvent!=='undefined' && typeof DeviceMotionEvent.requestPermission==='function'){
+      DeviceMotionEvent.requestPermission().then(res=>{ if(res==='granted') window.addEventListener('devicemotion', handleMotion); });
+    } else window.addEventListener('devicemotion', handleMotion);
+  }catch(e){ console.warn(e); }
+}
+function removeMotionListener(){ try{ window.removeEventListener('devicemotion', handleMotion); }catch(e){} }
+function setupGeolocationWatch(){
+  if(!navigator.geolocation) return;
+  if(watchId!==null){ try{ navigator.geolocation.clearWatch(watchId); }catch(e){} watchId=null; }
+  watchId=navigator.geolocation.watchPosition(onPosition,onError,{enableHighAccuracy:true,maximumAge:1000,timeout:10000});
+}
+function clearGeoWatch(){ if(watchId!==null && navigator.geolocation){ try{ navigator.geolocation.clearWatch(watchId); }catch(e){} watchId=null; }}
+
+/* --------------------------
+   GPS / splits
+-------------------------- */
 function onPosition(pos){
-  let lat=pos.coords.latitude, lon=pos.coords.longitude;
-  let now=Date.now();
-  if(!lastPos){ lastPos={lat,lon}; lastUpdateTime=now; path.addLatLng([lat,lon]); map.setView([lat,lon],16); return; }
-  let deltaT=Math.max((now-lastUpdateTime)/1000,0.001);
-  let d=haversine_m(lastPos.lat,lastPos.lon,lat,lon);
-  let speed=d/deltaT;
-  if(d<3 || speed>12) { lastPos={lat,lon}; lastUpdateTime=now; return; } //filter jumps
-  gpsDistance+=d;
-  estimatedStride=(stepCount>0)?Math.max(0.3,Math.min(2.5,gpsDistance/stepCount)):defaultStride;
-  let stepsDist=stepCount*estimatedStride;
-  let gpsConfidence=(speed>=0.3 && speed<=6)?0.85:0.35;
-  if(stepCount>20 && Math.abs(stepsDist-gpsDistance)/Math.max(1,gpsDistance)<0.4) gpsConfidence=0.9;
-  blendedDistance=gpsConfidence*gpsDistance+(1-gpsConfidence)*stepsDist;
-
-  // path + map
-  path.addLatLng([lat,lon]);
-  map.setView([lat,lon],16);
-
-  // 100m splits
-  if(Math.floor(blendedDistance/100) > lastSplit){
-    let newSplit = Math.floor(blendedDistance/100);
-    let totalMins = (Date.now()-startTime)/60000;
-    splits.push({ m:newSplit*100, pace: totalMins/(blendedDistance/1000) });
-    lastSplit=newSplit; renderSplits();
+  const lat=pos.coords.latitude, lon=pos.coords.longitude, now=Date.now();
+  if(typeof pos.coords.altitude==='number'){
+    if(lastAltitude===null) lastAltitude=pos.coords.altitude;
+    if(pos.coords.altitude>lastAltitude) elevationGain+=pos.coords.altitude-lastAltitude;
+    lastAltitude=pos.coords.altitude;
   }
-  lastPos={lat,lon}; lastUpdateTime=now;
+
+  if(!lastPos){ lastPos={lat,lon}; lastUpdateTime=now; path.addLatLng([lat,lon]);
+    map.setView([lat,lon],16); map.invalidateSize(); lastSplitTime=elapsed/1000; updateUIAll(); return; }
+
+  let d=haversine_m(lastPos.lat,lastPos.lon,lat,lon);
+  let deltaT=Math.max((now-lastUpdateTime)/1000,0.001);
+  let speed=d/deltaT;
+  if(d<3 || speed>12){ lastPos={lat,lon}; lastUpdateTime=now; return; }
+
+  gpsDistance+=d; lastPos={lat,lon}; lastUpdateTime=now;
+  estimatedStride = stepCount>0?Math.max(0.3,Math.min(2.5,gpsDistance/stepCount)):defaultStride;
+  blendedDistance = Math.max(gpsDistance, stepCount*estimatedStride);
+
+  path.addLatLng([lat,lon]);
+
+  recentDistances.push({d:d,t:deltaT*1000}); if(recentDistances.length>50) recentDistances.shift();
+
+  if(blendedDistance-lastSplit>=100){
+    let currentTimeSec=elapsed/1000;
+    let splitTimeSec=Math.max(0.001,currentTimeSec-lastSplitTime);
+    let splitSteps=stepCount-(splits.length>0?splits[splits.length-1].steps:0);
+    splits.push({m:Math.round(blendedDistance), time:splitTimeSec, steps:splitSteps});
+    lastSplit=blendedDistance; lastSplitTime=currentTimeSec;
+    renderSplits();
+
+    let pace=(elapsed/60000)/(blendedDistance/1000);
+    distanceChart.data.labels.push(Math.round(blendedDistance));
+    distanceChart.data.datasets[0].data.push(Number(pace.toFixed(2))); distanceChart.update();
+
+    timeChart.data.labels.push(Number((elapsed/60000).toFixed(2)));
+    timeChart.data.datasets[0].data.push(Number(pace.toFixed(2))); timeChart.update();
+  }
+  updateUIAll();
 }
+function onError(e){ console.warn(e); }
 
-/* --- Error --- */
-function onError(err){ console.warn(err.message); }
-
-/* --- Save summary --- */
-function saveSummary(){
-  leafletImage(map, function(err, canvasMap){
-    html2canvas(document.body).then(canvas=>{
-      let ctx=canvas.getContext('2d');
-      ctx.drawImage(canvasMap,20,canvas.height-320,canvas.width-40,300);
-      let link=document.createElement('a');
-      link.href=canvas.toDataURL('image/png'); link.download='run_summary.png'; link.click();
-    });
-  });
+/* --------------------------
+   Utilities
+-------------------------- */
+function haversine_m(lat1, lon1, lat2, lon2){
+  const R=6371000; const toRad=x=>x*Math.PI/180;
+  let dLat=toRad(lat2-lat1), dLon=toRad(lon2-lon1);
+  let a=Math.sin(dLat/2)**2+Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)**2;
+  return R*2*Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
 }
 </script>
 </body>
