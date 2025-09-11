@@ -18,7 +18,9 @@ button.secondary { background:#6c757d; }
 .tab-content { background:#fff; border-radius:0 0 8px 8px; padding:10px; min-height:200px; border:1px solid #ddd; }
 .stats-row { display:flex; flex-wrap:wrap; gap:8px; justify-content:center; }
 .stat { min-width:110px; padding:8px 10px; border-radius:6px; background:#fafafa; font-size:14px; text-align:center; box-shadow:0 0 0 1px rgba(0,0,0,0.03) inset; }
-#splitsList { font-size:12px; color:#555; max-height:140px; overflow:auto; }
+#splitsTable { width:100%; border-collapse:collapse; font-size:13px; }
+#splitsTable th, #splitsTable td { border:1px solid #eee; padding:8px; text-align:center; }
+#splitsTable th { background:#f3f3f3; font-weight:600; }
 .chart-wrap { width:100%; height:200px; margin-bottom:12px; }
 canvas.chart-canvas { width:100% !important; height:100% !important; display:block; }
 @media (max-width:520px){ #map{height:240px;} .stat{min-width:90px; font-size:13px;} }
@@ -62,7 +64,7 @@ canvas.chart-canvas { width:100% !important; height:100% !important; display:blo
 </div>
 
 <div id="splits" class="tab-content" style="display:none;">
-  <div id="splitsList">No splits yet</div>
+  <div id="splitsList"><em>No splits yet</em></div>
 </div>
 
 <!-- Scripts -->
@@ -84,13 +86,19 @@ let path = L.polyline([], { color:'red', weight:4, opacity:0.9 }).addTo(map);
 let running=false, paused=false, startTime=0, elapsed=0, timer=null;
 let lastPos=null, lastUpdateTime=null;
 let gpsDistance=0, blendedDistance=0;
+let prevBlendedDistance=0, prevElapsedTime=0, prevStepCount=0;
 let stepCount=0, lastStepTime=0, lastAccel=0;
 let splits=[], lastSplit=0, lastSplitTime=0;
 let defaultStride=0.78, estimatedStride=defaultStride;
 let elevationGain=0, lastAltitude=null;
 let watchId=null;
-let recentDistances=[]; // for live pace
-const LIVE_PACE_WINDOW=10; // meters
+let recentDistances=[]; // stores {d (meters), t (ms), ts (timestamp ms)} for live pace by time-window
+
+// CONFIG: tuned to avoid indoors jitter
+const LIVE_PACE_WINDOW_SEC = 10; // compute live pace based on last 10 seconds
+const MIN_MOVE_THRESHOLD_M = 3.0; // ignore movements smaller than this (meters) — raised to avoid jitter
+const MAX_VALID_SPEED_MPS = 12; // ignore implausible updates faster than this
+const MAX_ACCEPTABLE_ACCURACY_M = 20; // ignore updates with accuracy worse than this
 
 /* --------------------------
    Charts
@@ -147,14 +155,31 @@ function updateUIAll(){
   let avgPace=(blendedDistance>0)?(elapsed/60000)/(blendedDistance/1000):0;
   document.getElementById('avgpace').innerText=avgPace>0?mmssFromMinutes(avgPace):'0:00';
 
-  let livePace=avgPace;
-  let totalRecentDist=0,totalRecentTime=0;
-  for(let j=recentDistances.length-1;j>=0;j--){
-    totalRecentDist+=recentDistances[j].d;
-    totalRecentTime+=recentDistances[j].t;
-    if(totalRecentDist>=LIVE_PACE_WINDOW) break;
+  // Live pace: compute over last LIVE_PACE_WINDOW_SEC seconds (time-based window)
+  let nowTs = Date.now();
+  let windowMs = LIVE_PACE_WINDOW_SEC*1000;
+  let distSum = 0, timeSum = 0;
+  for(let i=recentDistances.length-1;i>=0;i--){
+    const item = recentDistances[i];
+    const age = nowTs - item.ts;
+    if(age <= windowMs){
+      distSum += item.d;
+      timeSum += item.t;
+    } else {
+      // partial overlap (rare) - approximate proportion
+      const overlap = Math.max(0, windowMs - (nowTs - item.ts) + item.t);
+      if(overlap>0 && item.t>0){
+        const frac = overlap / item.t;
+        distSum += item.d * frac;
+        timeSum += item.t * frac;
+      }
+      break;
+    }
   }
-  if(totalRecentDist>0) livePace=(totalRecentTime/60000)/(totalRecentDist/1000);
+  let livePace = avgPace;
+  if(distSum>0 && timeSum>0){
+    livePace = (timeSum/60000)/(distSum/1000); // min/km
+  }
   document.getElementById('livepace').innerText=livePace>0?mmssFromMinutes(livePace):'0:00';
 
   document.getElementById('steps').innerText=stepCount;
@@ -164,15 +189,19 @@ function updateUIAll(){
 }
 
 function renderSplits(){
-  let html='';
-  if(splits.length===0) html='No splits yet';
-  else{
-    for(let i=splits.length-1;i>=0;i--){
-      const s=splits[i];
-      html+=`<div style="margin-bottom:6px;">${s.m} m — <strong>${formatSeconds(s.time)}</strong> — Steps: ${s.steps}</div>`;
-    }
+  if(splits.length===0){
+    document.getElementById('splitsList').innerHTML='<em>No splits yet</em>';
+    return;
   }
-  document.getElementById('splitsList').innerHTML=html;
+  // Build table: Distance (m) | Time (s) | Steps
+  let html = '<table id="splitsTable"><thead><tr><th>Distance (m)</th><th>Time (s)</th><th>Steps</th></tr></thead><tbody>';
+  // show splits oldest first (ascending distance)
+  for(let i=0;i<splits.length;i++){
+    const s = splits[i];
+    html += `<tr><td>${s.m}</td><td>${Math.round(s.time)}</td><td>${s.steps}</td></tr>`;
+  }
+  html += '</tbody></table>';
+  document.getElementById('splitsList').innerHTML = html;
 }
 
 /* --------------------------
@@ -238,8 +267,11 @@ function startRun(){
     setupMotionListener(); setupGeolocationWatch(); return;
   }
   running=true; paused=false; startTime=Date.now(); elapsed=0;
-  lastPos=null; gpsDistance=0; blendedDistance=0; stepCount=0;
-  splits=[]; lastSplit=0; lastSplitTime=0; estimatedStride=defaultStride;
+  lastPos=null; lastUpdateTime=null; gpsDistance=0; blendedDistance=0;
+  prevBlendedDistance=0; prevElapsedTime=0; prevStepCount=0;
+  stepCount=0;
+  splits=[]; lastSplit=0; lastSplitTime=0;
+  estimatedStride=defaultStride;
   elevationGain=0; lastAltitude=null; recentDistances=[];
   path.setLatLngs([]);
   distanceChart.data.labels=[]; distanceChart.data.datasets[0].data=[]; distanceChart.update();
@@ -251,6 +283,7 @@ function startRun(){
 function pauseRun(){ if(!running||paused) return; paused=true; clearInterval(timer); timer=null; removeMotionListener(); clearGeoWatch(); }
 function resetRun(){ running=false; paused=false; clearInterval(timer); timer=null; removeMotionListener(); clearGeoWatch();
   lastPos=null; lastUpdateTime=null; gpsDistance=0; blendedDistance=0;
+  prevBlendedDistance=0; prevElapsedTime=0; prevStepCount=0;
   stepCount=0; splits=[]; lastSplit=0; lastSplitTime=0; estimatedStride=defaultStride;
   elevationGain=0; lastAltitude=null; recentDistances=[]; path.setLatLngs([]);
   distanceChart.data.labels=[]; distanceChart.data.datasets[0].data=[]; distanceChart.update();
@@ -264,43 +297,128 @@ function setupGeolocationWatch(){ if(!navigator.geolocation) return; if(watchId!
 function clearGeoWatch(){ if(watchId!==null && navigator.geolocation){ try{ navigator.geolocation.clearWatch(watchId); }catch(e){} watchId=null; }}
 
 /* --------------------------
-   GPS / splits
+   GPS / splits (improved precise 100m splits + interpolation)
 -------------------------- */
 function onPosition(pos){
   const lat=pos.coords.latitude, lon=pos.coords.longitude, now=Date.now();
-  if(typeof pos.coords.altitude==='number'){ if(lastAltitude===null) lastAltitude=pos.coords.altitude; if(pos.coords.altitude>lastAltitude) elevationGain+=pos.coords.altitude-lastAltitude; lastAltitude=pos.coords.altitude; }
 
-  if(!lastPos){ lastPos={lat,lon}; lastUpdateTime=now; path.addLatLng([lat,lon]); map.setView([lat,lon],16); map.invalidateSize(); lastSplitTime=elapsed/1000; updateUIAll(); return; }
+  // Reject very inaccurate readings (helps stop indoor drift)
+  if(typeof pos.coords.accuracy === 'number' && pos.coords.accuracy > MAX_ACCEPTABLE_ACCURACY_M){
+    // don't update lastPos — ignore this noisy sample entirely
+    return;
+  }
 
-  let d=haversine_m(lastPos.lat,lastPos.lon,lat,lon);
-  let deltaT=Math.max((now-lastUpdateTime)/1000,0.001);
-  let speed=d/deltaT;
-  if(d<3 || speed>12){ lastPos={lat,lon}; lastUpdateTime=now; return; }
+  if(typeof pos.coords.altitude==='number'){
+    if(lastAltitude===null) lastAltitude=pos.coords.altitude;
+    if(pos.coords.altitude>lastAltitude) elevationGain+=pos.coords.altitude-lastAltitude;
+    lastAltitude=pos.coords.altitude;
+  }
 
-  gpsDistance+=d; lastPos={lat,lon}; lastUpdateTime=now;
-  estimatedStride = stepCount>0?Math.max(0.3,Math.min(2.5,gpsDistance/stepCount)):defaultStride;
+  if(!lastPos){
+    lastPos={lat,lon}; lastUpdateTime=now; path.addLatLng([lat,lon]);
+    map.setView([lat,lon],16); map.invalidateSize();
+    // initialize prev timing counters
+    prevBlendedDistance = blendedDistance;
+    prevElapsedTime = elapsed/1000;
+    prevStepCount = stepCount;
+    lastSplitTime = elapsed/1000;
+    // push a tiny recentDistances item so live-pace has consistent timeline
+    recentDistances.push({d:0, t:1, ts: now});
+    updateUIAll();
+    return;
+  }
+
+  // store previous snapshot for interpolation
+  prevBlendedDistance = blendedDistance;
+  prevElapsedTime = elapsed/1000;
+  prevStepCount = stepCount;
+
+  let d = haversine_m(lastPos.lat,lastPos.lon,lat,lon);
+  let deltaT = Math.max((now - lastUpdateTime)/1000, 0.001);
+  let speed = d / deltaT;
+
+  // filter out very small jitter or implausible jumps:
+  if(d < MIN_MOVE_THRESHOLD_M || speed > MAX_VALID_SPEED_MPS){
+    // treat as zero movement but keep timeline consistent to compute live pace
+    recentDistances.push({d:0, t: deltaT*1000, ts: now});
+    if(recentDistances.length>500) recentDistances.shift();
+    // update lastPos to current to avoid accumulating jitter from old point
+    lastPos = {lat,lon};
+    lastUpdateTime = now;
+    // still update UI so user sees stable values
+    updateUIAll();
+    return;
+  }
+
+  // update GPS distance & timestamps
+  gpsDistance += d;
+  lastPos = {lat,lon};
+  lastUpdateTime = now;
+
+  // estimate stride more robustly: simple smoothing using existing estimate and instantaneous
+  if(stepCount>0){
+    let instStride = gpsDistance/stepCount;
+    instStride = Math.max(0.3, Math.min(2.5, instStride));
+    estimatedStride = estimatedStride*0.85 + instStride*0.15;
+  } else {
+    estimatedStride = defaultStride;
+  }
+
+  // blendedDistance: choose sensible combination (prefer GPS but fallback to steps*stride)
   blendedDistance = Math.max(gpsDistance, stepCount*estimatedStride);
 
-  path.addLatLng([lat,lon]);
-  recentDistances.push({d:d,t:deltaT*1000}); if(recentDistances.length>50) recentDistances.shift();
+  // store recent distance segment for live pace window (in ms)
+  recentDistances.push({d: d, t: deltaT*1000, ts: now});
+  if(recentDistances.length>500) recentDistances.shift();
 
-  if(blendedDistance-lastSplit>=100){
-    let currentTimeSec=elapsed/1000;
-    let splitTimeSec=Math.max(0.001,currentTimeSec-lastSplitTime);
-    let splitSteps=stepCount-(splits.length>0?splits[splits.length-1].steps:0);
-    splits.push({m:Math.round(blendedDistance), time:splitTimeSec, steps:splitSteps});
-    lastSplit=blendedDistance; lastSplitTime=currentTimeSec;
-    renderSplits();
+  // PRECISE 100m split handling:
+  let prevDist = prevBlendedDistance;
+  let currDist = blendedDistance;
+  let currTime = elapsed/1000; // seconds
+  const segmentDist = currDist - prevDist;
+  const segmentTime = currTime - prevElapsedTime;
+  const segmentSteps = stepCount - prevStepCount;
 
-    let pace=(elapsed/60000)/(blendedDistance/1000);
-    distanceChart.data.labels.push(Math.round(blendedDistance));
-    distanceChart.data.datasets[0].data.push(Number(pace.toFixed(2))); distanceChart.update();
+  if(segmentDist > 0.0001){
+    let nextTarget = Math.floor(lastSplit/100 + 1) * 100;
+    while(nextTarget <= Math.floor(currDist)){
+      const neededFromPrev = nextTarget - prevDist;
+      const ratio = Math.max(0, Math.min(1, neededFromPrev / segmentDist));
+      const splitAbsoluteTime = prevElapsedTime + ratio * segmentTime; // seconds
+      const stepsAtTarget = prevStepCount + Math.round(ratio * segmentSteps);
+      const splitDuration = Math.max(0.0001, splitAbsoluteTime - lastSplitTime);
+      const splitSteps = stepsAtTarget - (splits.length>0 ? splits[splits.length-1].cumulativeSteps || 0 : 0);
+      const cumulativeStepsAtTarget = stepsAtTarget;
 
-    timeChart.data.labels.push(Number((elapsed/60000).toFixed(2)));
-    timeChart.data.datasets[0].data.push(Number(pace.toFixed(2))); timeChart.update();
+      splits.push({
+        m: nextTarget,
+        time: splitDuration, // SECONDS
+        steps: Math.max(0, splitSteps),
+        cumulativeSteps: cumulativeStepsAtTarget
+      });
+
+      // ensure UI updates show the new split
+      renderSplits();
+
+      // Update charts: pace for 100m split = splitDuration / 6 (min/km)
+      const paceMinPerKm = splitDuration / 6;
+      distanceChart.data.labels.push(nextTarget);
+      distanceChart.data.datasets[0].data.push(Number(paceMinPerKm.toFixed(2)));
+
+      timeChart.data.labels.push(Number((splitAbsoluteTime/60).toFixed(2)));
+      timeChart.data.datasets[0].data.push(Number(paceMinPerKm.toFixed(2)));
+
+      lastSplit = nextTarget;
+      lastSplitTime = splitAbsoluteTime;
+      nextTarget += 100;
+    }
   }
+
+  distanceChart.update();
+  timeChart.update();
   updateUIAll();
 }
+
 function onError(e){ console.warn(e); }
 
 /* --------------------------
@@ -315,6 +433,7 @@ function haversine_m(lat1, lon1, lat2, lon2){
 </script>
 </body>
 </html>
+
 
 
 
