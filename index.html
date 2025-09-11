@@ -65,9 +65,11 @@ canvas.chart-canvas { width:100% !important; height:100% !important; display:blo
   <div id="splitsList">No splits yet</div>
 </div>
 
+<!-- Scripts -->
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="https://unpkg.com/leaflet-image/leaflet-image.js"></script>
 <script>
 /* --------------------------
    Map
@@ -191,8 +193,44 @@ function handleMotion(e){
 document.getElementById('btnStart').onclick=startRun;
 document.getElementById('btnPause').onclick=pauseRun;
 document.getElementById('btnReset').onclick=resetRun;
-document.getElementById('btnSave').onclick=()=>{ html2canvas(document.body).then(c=>{ let a=document.createElement('a'); a.href=c.toDataURL(); a.download='summary.png'; a.click(); }); }
 
+/* --------------------------
+   Screenshot — High-res all-tabs
+-------------------------- */
+document.getElementById('btnSave').onclick=captureAllTabsScreenshot;
+function captureAllTabsScreenshot(){
+  const container=document.body;
+  const tabs=document.querySelectorAll('.tab-content');
+  const displayBackup=[];
+  tabs.forEach((t,i)=>{ displayBackup[i]=t.style.display; t.style.display='block'; });
+
+  distanceChart.resize(); distanceChart.update();
+  timeChart.resize(); timeChart.update();
+  map.invalidateSize();
+
+  leafletImage(map, function(err,mapCanvas){
+    if(err){ console.error(err); return; }
+
+    const mapDiv=document.getElementById('map');
+    const originalMapDisplay=mapDiv.style.display;
+    mapDiv.style.display='none';
+    mapCanvas.id='mapCanvasTemp';
+    mapCanvas.style.width=mapDiv.offsetWidth+'px';
+    mapCanvas.style.height=mapDiv.offsetHeight+'px';
+    mapDiv.parentNode.insertBefore(mapCanvas,mapDiv);
+
+    html2canvas(container,{useCORS:true,allowTaint:true,scale:2}).then(canvas=>{
+      const a=document.createElement('a'); a.href=canvas.toDataURL(); a.download='run_summary.png'; a.click();
+      mapDiv.style.display=originalMapDisplay;
+      mapCanvas.remove();
+      tabs.forEach((t,i)=>t.style.display=displayBackup[i]);
+    });
+  });
+}
+
+/* --------------------------
+   Run functions: start/pause/reset and GPS
+-------------------------- */
 function startRun(){
   if(running && paused){
     paused=false; startTime=Date.now()-elapsed;
@@ -210,39 +248,19 @@ function startRun(){
   setupMotionListener(); setupGeolocationWatch();
   timer=setInterval(()=>{ elapsed=Date.now()-startTime; updateUIAll(); },1000);
 }
-
-function pauseRun(){
-  if(!running||paused) return;
-  paused=true; clearInterval(timer); timer=null;
-  removeMotionListener(); clearGeoWatch();
-}
-
-function resetRun(){
-  running=false; paused=false; clearInterval(timer); timer=null;
-  removeMotionListener(); clearGeoWatch();
+function pauseRun(){ if(!running||paused) return; paused=true; clearInterval(timer); timer=null; removeMotionListener(); clearGeoWatch(); }
+function resetRun(){ running=false; paused=false; clearInterval(timer); timer=null; removeMotionListener(); clearGeoWatch();
   lastPos=null; lastUpdateTime=null; gpsDistance=0; blendedDistance=0;
-  stepCount=0; splits=[]; lastSplit=0; lastSplitTime=0;
-  estimatedStride=defaultStride; elevationGain=0; lastAltitude=null; recentDistances=[];
-  path.setLatLngs([]);
+  stepCount=0; splits=[]; lastSplit=0; lastSplitTime=0; estimatedStride=defaultStride;
+  elevationGain=0; lastAltitude=null; recentDistances=[]; path.setLatLngs([]);
   distanceChart.data.labels=[]; distanceChart.data.datasets[0].data=[]; distanceChart.update();
   timeChart.data.labels=[]; timeChart.data.datasets[0].data=[]; timeChart.update();
-  updateUIAll(); renderSplits();
-  map.setView([20.5937,78.9629],5);
+  updateUIAll(); renderSplits(); map.setView([20.5937,78.9629],5);
 }
 
-function setupMotionListener(){
-  try{
-    if(typeof DeviceMotionEvent!=='undefined' && typeof DeviceMotionEvent.requestPermission==='function'){
-      DeviceMotionEvent.requestPermission().then(res=>{ if(res==='granted') window.addEventListener('devicemotion', handleMotion); });
-    } else window.addEventListener('devicemotion', handleMotion);
-  }catch(e){ console.warn(e); }
-}
+function setupMotionListener(){ try{ if(typeof DeviceMotionEvent!=='undefined' && typeof DeviceMotionEvent.requestPermission==='function'){ DeviceMotionEvent.requestPermission().then(res=>{ if(res==='granted') window.addEventListener('devicemotion', handleMotion); }); } else window.addEventListener('devicemotion', handleMotion); }catch(e){ console.warn(e); } }
 function removeMotionListener(){ try{ window.removeEventListener('devicemotion', handleMotion); }catch(e){} }
-function setupGeolocationWatch(){
-  if(!navigator.geolocation) return;
-  if(watchId!==null){ try{ navigator.geolocation.clearWatch(watchId); }catch(e){} watchId=null; }
-  watchId=navigator.geolocation.watchPosition(onPosition,onError,{enableHighAccuracy:true,maximumAge:1000,timeout:10000});
-}
+function setupGeolocationWatch(){ if(!navigator.geolocation) return; if(watchId!==null){ try{ navigator.geolocation.clearWatch(watchId); }catch(e){} watchId=null; } watchId=navigator.geolocation.watchPosition(onPosition,onError,{enableHighAccuracy:true,maximumAge:1000,timeout:10000}); }
 function clearGeoWatch(){ if(watchId!==null && navigator.geolocation){ try{ navigator.geolocation.clearWatch(watchId); }catch(e){} watchId=null; }}
 
 /* --------------------------
@@ -250,14 +268,9 @@ function clearGeoWatch(){ if(watchId!==null && navigator.geolocation){ try{ navi
 -------------------------- */
 function onPosition(pos){
   const lat=pos.coords.latitude, lon=pos.coords.longitude, now=Date.now();
-  if(typeof pos.coords.altitude==='number'){
-    if(lastAltitude===null) lastAltitude=pos.coords.altitude;
-    if(pos.coords.altitude>lastAltitude) elevationGain+=pos.coords.altitude-lastAltitude;
-    lastAltitude=pos.coords.altitude;
-  }
+  if(typeof pos.coords.altitude==='number'){ if(lastAltitude===null) lastAltitude=pos.coords.altitude; if(pos.coords.altitude>lastAltitude) elevationGain+=pos.coords.altitude-lastAltitude; lastAltitude=pos.coords.altitude; }
 
-  if(!lastPos){ lastPos={lat,lon}; lastUpdateTime=now; path.addLatLng([lat,lon]);
-    map.setView([lat,lon],16); map.invalidateSize(); lastSplitTime=elapsed/1000; updateUIAll(); return; }
+  if(!lastPos){ lastPos={lat,lon}; lastUpdateTime=now; path.addLatLng([lat,lon]); map.setView([lat,lon],16); map.invalidateSize(); lastSplitTime=elapsed/1000; updateUIAll(); return; }
 
   let d=haversine_m(lastPos.lat,lastPos.lon,lat,lon);
   let deltaT=Math.max((now-lastUpdateTime)/1000,0.001);
@@ -269,7 +282,6 @@ function onPosition(pos){
   blendedDistance = Math.max(gpsDistance, stepCount*estimatedStride);
 
   path.addLatLng([lat,lon]);
-
   recentDistances.push({d:d,t:deltaT*1000}); if(recentDistances.length>50) recentDistances.shift();
 
   if(blendedDistance-lastSplit>=100){
@@ -303,5 +315,6 @@ function haversine_m(lat1, lon1, lat2, lon2){
 </script>
 </body>
 </html>
+
 
 
