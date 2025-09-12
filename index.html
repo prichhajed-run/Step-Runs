@@ -111,6 +111,7 @@ gpsInfoControl.onAdd = function () {
     <div>Accuracy: <span id="gpsAccuracy">—</span> m <span id="gpsBadge" class="gps-badge"></span></div>
     <div>Strength: <span id="gpsStrength">—</span></div>
     <div>Place: <span id="gpsPlace">—</span></div>
+    <div class="gps-legend"><small>Accuracy circle shown on map</small></div>
   `;
   // prevent map interactions when hovering the control
   L.DomEvent.disableClickPropagation(div);
@@ -346,86 +347,10 @@ function resetRun(){ running=false; paused=false; clearInterval(timer); timer=nu
   document.getElementById('gpsPlace').innerText='—';
 }
 
-function setupMotionListener() {
-  try {
-    if (typeof DeviceMotionEvent !== 'undefined' && 
-        typeof DeviceMotionEvent.requestPermission === 'function') {
-      DeviceMotionEvent.requestPermission().then(res => {
-        if (res === 'granted') {
-          window.addEventListener('devicemotion', handleMotion);
-        }
-      });
-    } else {
-      window.addEventListener('devicemotion', handleMotion);
-    }
-  } catch (e) {
-    console.warn(e);
-  }
-}
-
-function removeMotionListener() {
-  try {
-    window.removeEventListener('devicemotion', handleMotion);
-  } catch (e) {}
-}
-
-function setupGeolocationWatch() {
-  if (!navigator.geolocation) return;
-
-  // Clear any existing watch first
-  if (watchId !== null) {
-    try {
-      navigator.geolocation.clearWatch(watchId);
-    } catch (e) {}
-    watchId = null;
-  }
-
-  // Start watching
-  watchId = navigator.geolocation.watchPosition(
-    pos => {
-      const { latitude: lat, longitude: lng, accuracy, altitude } = pos.coords;
-      const ts = pos.timestamp;
-
-      // --- update marker ---
-      if (!gpsMarker) {
-        gpsMarker = L.marker([lat, lng]).addTo(map);
-      } else {
-        gpsMarker.setLatLng([lat, lng]);
-      }
-
-      // --- update accuracy circle ---
-      if (!accuracyCircle) {
-        accuracyCircle = L.circle([lat, lng], { radius: accuracy, color: '#00f', fillOpacity: 0.1 }).addTo(map);
-      } else {
-        accuracyCircle.setLatLng([lat, lng]).setRadius(accuracy);
-      }
-
-      // --- draw the path ---
-      path.addLatLng([lat, lng]);
-
-      // --- center map on first point ---
-      if (!lastPos) {
-        map.setView([lat, lng], 16);
-      }
-
-      // --- store last position ---
-      lastPos = { lat, lng, ts };
-
-      // ... your existing distance, pace, steps logic here ...
-    },
-    err => console.error(err),
-    { enableHighAccuracy: true, maximumAge: 1000, timeout: 10000 }
-  );
-}
-
-function clearGeoWatch() {
-  if (watchId !== null && navigator.geolocation) {
-    try {
-      navigator.geolocation.clearWatch(watchId);
-    } catch (e) {}
-    watchId = null;
-  }
-}
+function setupMotionListener(){ try{ if(typeof DeviceMotionEvent!=='undefined' && typeof DeviceMotionEvent.requestPermission==='function'){ DeviceMotionEvent.requestPermission().then(res=>{ if(res==='granted') window.addEventListener('devicemotion', handleMotion); }); } else window.addEventListener('devicemotion', handleMotion); }catch(e){ console.warn(e); } }
+function removeMotionListener(){ try{ window.removeEventListener('devicemotion', handleMotion); }catch(e){} }
+function setupGeolocationWatch(){ if(!navigator.geolocation) return; if(watchId!==null){ try{ navigator.geolocation.clearWatch(watchId); }catch(e){} watchId=null; } watchId=navigator.geolocation.watchPosition(onPosition,onError,{enableHighAccuracy:true,maximumAge:1000,timeout:10000}); }
+function clearGeoWatch(){ if(watchId!==null && navigator.geolocation){ try{ navigator.geolocation.clearWatch(watchId); }catch(e){} watchId=null; }}
 
 /* --------------------------
    Reverse geocode (Nominatim)
@@ -645,3 +570,4 @@ function haversine_m(lat1, lon1, lat2, lon2){
 </script>
 </body>
 </html>
+
