@@ -11,7 +11,17 @@ h1 { text-align:center; color:#0a4; margin:0 0 10px 0; }
 .controls { text-align:center; margin-bottom:8px; }
 button { margin:6px 6px; padding:10px 14px; font-size:15px; border-radius:7px; border:none; background:#007bff; color:white; cursor:pointer; }
 button.secondary { background:#6c757d; }
-#map { height:360px; border-radius:8px; overflow:hidden; border:1px solid #ddd; margin-bottom:10px; }
+#map { height:360px; border-radius:8px; overflow:hidden; border:1px solid #ddd; margin-bottom:10px; position:relative; }
+.leaflet-top.leaflet-right .map-info { margin-top:8px; }
+.map-info {
+  background: rgba(255,255,255,0.95);
+  padding:8px 10px;
+  border-radius:6px;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.12);
+  font-size:13px;
+  min-width:150px;
+}
+.map-info b { display:block; margin-bottom:4px; }
 .tabs { display:flex; margin-bottom:10px; }
 .tab { flex:1; padding:10px; text-align:center; cursor:pointer; background:#eee; border-radius:6px 6px 0 0; margin-right:2px; }
 .tab.active { background:#fff; border-bottom:1px solid #fff; }
@@ -23,6 +33,12 @@ button.secondary { background:#6c757d; }
 #splitsTable th { background:#f3f3f3; font-weight:600; }
 .chart-wrap { width:100%; height:200px; margin-bottom:12px; }
 canvas.chart-canvas { width:100% !important; height:100% !important; display:block; }
+.gps-legend { font-size:12px; margin-top:6px; color:#333; }
+.gps-badge { display:inline-block; padding:3px 7px; border-radius:999px; font-weight:600; margin-left:6px; }
+.gps-verygood { background:#2ecc71; color:#fff; }
+.gps-good { background:#f1c40f; color:#fff; }
+.gps-fair { background:#e67e22; color:#fff; }
+.gps-poor { background:#e74c3c; color:#fff; }
 @media (max-width:520px){ #map{height:240px;} .stat{min-width:90px; font-size:13px;} }
 </style>
 </head>
@@ -80,6 +96,29 @@ let map = L.map('map', { attributionControl:false }).setView([20.5937,78.9629],5
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{ maxZoom:19 }).addTo(map);
 let path = L.polyline([], { color:'red', weight:4, opacity:0.9 }).addTo(map);
 
+let gpsMarker = null;
+let accuracyCircle = null;
+let gpsInfoControl = null;
+let lastReverseGeocodeTs = 0;
+const REVERSE_GEOCODE_MIN_MS = 15000; // don't call reverse geocode more than once every 15s
+
+// Create a map control for GPS info (accuracy, strength, place name)
+gpsInfoControl = L.control({ position: 'topright' });
+gpsInfoControl.onAdd = function () {
+  const div = L.DomUtil.create('div', 'map-info');
+  div.innerHTML = `
+    <b>GPS</b>
+    <div>Accuracy: <span id="gpsAccuracy">—</span> m <span id="gpsBadge" class="gps-badge"></span></div>
+    <div>Strength: <span id="gpsStrength">—</span></div>
+    <div>Place: <span id="gpsPlace">—</span></div>
+    <div class="gps-legend"><small>Accuracy circle shown on map</small></div>
+  `;
+  // prevent map interactions when hovering the control
+  L.DomEvent.disableClickPropagation(div);
+  return div;
+};
+gpsInfoControl.addTo(map);
+
 /* --------------------------
    State
 -------------------------- */
@@ -96,8 +135,8 @@ let recentDistances=[]; // stores {d (meters), t (ms), ts (timestamp ms)} for li
 
 // CONFIG: tuned to avoid indoors jitter
 const LIVE_PACE_WINDOW_SEC = 10; // compute live pace based on last 10 seconds
-const MIN_MOVE_THRESHOLD_M = 3.0; // ignore movements smaller than this (meters) — raised to avoid jitter
-const MAX_VALID_SPEED_MPS = 12; // ignore implausible updates faster than this
+const MIN_MOVE_THRESHOLD_M = 1.0; // ignore movements smaller than this (meters) — raised to avoid jitter
+const MAX_VALID_SPEED_MPS = 6.0; // ignore implausible updates faster than this
 const MAX_ACCEPTABLE_ACCURACY_M = 20; // ignore updates with accuracy worse than this
 
 /* --------------------------
@@ -144,6 +183,14 @@ document.querySelectorAll('.tab').forEach(tab=>{
 function pad2(n){ return (n<10?'0':'')+n; }
 function formatSeconds(sec){ sec=Math.round(sec); let m=Math.floor(sec/60), s=sec%60; return pad2(m)+':'+pad2(s); }
 function mmssFromMinutes(mins){ let m=Math.floor(mins), s=Math.round((mins-m)*60); return pad2(m)+':'+pad2(s); }
+
+function getStrengthLabelFromAccuracy(acc){
+  if(acc === null || typeof acc === 'undefined') return { label:'Unknown', cls:'' };
+  if(acc <= 5) return { label: 'Excellent', cls: 'gps-verygood' };
+  if(acc <= 10) return { label: 'Good', cls: 'gps-good' };
+  if(acc <= 20) return { label: 'Fair', cls: 'gps-fair' };
+  return { label: 'Poor', cls: 'gps-poor' };
+}
 
 /* --------------------------
    UI
@@ -289,6 +336,15 @@ function resetRun(){ running=false; paused=false; clearInterval(timer); timer=nu
   distanceChart.data.labels=[]; distanceChart.data.datasets[0].data=[]; distanceChart.update();
   timeChart.data.labels=[]; timeChart.data.datasets[0].data=[]; timeChart.update();
   updateUIAll(); renderSplits(); map.setView([20.5937,78.9629],5);
+
+  // remove marker/circle and reset map-info
+  if(gpsMarker){ map.removeLayer(gpsMarker); gpsMarker=null; }
+  if(accuracyCircle){ map.removeLayer(accuracyCircle); accuracyCircle=null; }
+  document.getElementById('gpsAccuracy').innerText='—';
+  document.getElementById('gpsStrength').innerText='—';
+  document.getElementById('gpsBadge').innerText='';
+  document.getElementById('gpsBadge').className='gps-badge';
+  document.getElementById('gpsPlace').innerText='—';
 }
 
 function setupMotionListener(){ try{ if(typeof DeviceMotionEvent!=='undefined' && typeof DeviceMotionEvent.requestPermission==='function'){ DeviceMotionEvent.requestPermission().then(res=>{ if(res==='granted') window.addEventListener('devicemotion', handleMotion); }); } else window.addEventListener('devicemotion', handleMotion); }catch(e){ console.warn(e); } }
@@ -297,14 +353,49 @@ function setupGeolocationWatch(){ if(!navigator.geolocation) return; if(watchId!
 function clearGeoWatch(){ if(watchId!==null && navigator.geolocation){ try{ navigator.geolocation.clearWatch(watchId); }catch(e){} watchId=null; }}
 
 /* --------------------------
+   Reverse geocode (Nominatim)
+-------------------------- */
+function reverseGeocode(lat, lon){
+  const now = Date.now();
+  if(now - lastReverseGeocodeTs < REVERSE_GEOCODE_MIN_MS) return; // basic throttle
+  lastReverseGeocodeTs = now;
+  // Nominatim reverse geocode (free/open). Keep requests limited.
+  const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}`;
+  fetch(url, { headers: { 'Accept': 'application/json' } })
+    .then(r=>r.ok? r.json() : Promise.reject('no-rev'))
+    .then(data=>{
+      let place = 'Unknown';
+      if(data && data.address){
+        // prefer city, town, village, then suburb/locality, then county
+        place = data.address.city || data.address.town || data.address.village || data.address.suburb || data.address.locality || data.address.county || data.display_name || 'Unknown';
+      } else if(data && data.display_name) place = data.display_name;
+      document.getElementById('gpsPlace').innerText = place;
+    }).catch(err=>{
+      // silently ignore reverse-geocode errors (rate-limits etc)
+      // console.warn('reverse geocode failed', err);
+    });
+}
+
+/* --------------------------
    GPS / splits (improved precise 100m splits + interpolation)
 -------------------------- */
 function onPosition(pos){
   const lat=pos.coords.latitude, lon=pos.coords.longitude, now=Date.now();
 
+  // Update map marker & accuracy circle & GPS UI
+  const acc = (typeof pos.coords.accuracy === 'number') ? pos.coords.accuracy : null;
+  updateMapLocation(lat, lon, acc);
+
   // Reject very inaccurate readings (helps stop indoor drift)
   if(typeof pos.coords.accuracy === 'number' && pos.coords.accuracy > MAX_ACCEPTABLE_ACCURACY_M){
     // don't update lastPos — ignore this noisy sample entirely
+    // still show accuracy info on UI
+    document.getElementById('gpsAccuracy').innerText = (acc !== null ? acc.toFixed(1) : '—');
+    const st = getStrengthLabelFromAccuracy(acc);
+    document.getElementById('gpsStrength').innerText = st.label;
+    const badge = document.getElementById('gpsBadge');
+    badge.innerText = st.label;
+    badge.className = 'gps-badge ' + (st.cls || '');
     return;
   }
 
@@ -324,6 +415,14 @@ function onPosition(pos){
     lastSplitTime = elapsed/1000;
     // push a tiny recentDistances item so live-pace has consistent timeline
     recentDistances.push({d:0, t:1, ts: now});
+    // update UI
+    document.getElementById('gpsAccuracy').innerText = (acc !== null ? acc.toFixed(1) : '—');
+    const st = getStrengthLabelFromAccuracy(acc);
+    document.getElementById('gpsStrength').innerText = st.label;
+    const badge = document.getElementById('gpsBadge');
+    badge.innerText = st.label;
+    badge.className = 'gps-badge ' + (st.cls || '');
+    reverseGeocode(lat, lon);
     updateUIAll();
     return;
   }
@@ -346,6 +445,14 @@ function onPosition(pos){
     lastPos = {lat,lon};
     lastUpdateTime = now;
     // still update UI so user sees stable values
+    document.getElementById('gpsAccuracy').innerText = (acc !== null ? acc.toFixed(1) : '—');
+    const st = getStrengthLabelFromAccuracy(acc);
+    document.getElementById('gpsStrength').innerText = st.label;
+    const badge = document.getElementById('gpsBadge');
+    badge.innerText = st.label;
+    badge.className = 'gps-badge ' + (st.cls || '');
+    // occasionally refresh place name
+    reverseGeocode(lat, lon);
     updateUIAll();
     return;
   }
@@ -416,10 +523,40 @@ function onPosition(pos){
 
   distanceChart.update();
   timeChart.update();
+  document.getElementById('gpsAccuracy').innerText = (acc !== null ? acc.toFixed(1) : '—');
+  const st = getStrengthLabelFromAccuracy(acc);
+  document.getElementById('gpsStrength').innerText = st.label;
+  const badge = document.getElementById('gpsBadge');
+  badge.innerText = st.label;
+  badge.className = 'gps-badge ' + (st.cls || '');
+  reverseGeocode(lat, lon);
   updateUIAll();
 }
 
 function onError(e){ console.warn(e); }
+
+/* --------------------------
+   Map helpers: marker + accuracy circle
+-------------------------- */
+function updateMapLocation(lat, lon, accuracy){
+  // marker
+  if(!gpsMarker){
+    gpsMarker = L.circleMarker([lat,lon], { radius:6, color:'#0066cc', fillColor:'#fff', weight:2, fillOpacity:1 }).addTo(map);
+  } else {
+    gpsMarker.setLatLng([lat,lon]);
+  }
+  // accuracy circle in meters
+  if(accuracy && !isNaN(accuracy)){
+    if(!accuracyCircle){
+      accuracyCircle = L.circle([lat,lon], { radius: accuracy, color:'#3388ff', fillColor:'#3388ff', fillOpacity:0.08, weight:1 }).addTo(map);
+    } else {
+      accuracyCircle.setLatLng([lat,lon]);
+      accuracyCircle.setRadius(accuracy);
+    }
+  } else {
+    if(accuracyCircle){ map.removeLayer(accuracyCircle); accuracyCircle=null; }
+  }
+}
 
 /* --------------------------
    Utilities
@@ -433,7 +570,3 @@ function haversine_m(lat1, lon1, lat2, lon2){
 </script>
 </body>
 </html>
-
-
-
-
