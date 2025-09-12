@@ -113,7 +113,6 @@ gpsInfoControl.onAdd = function () {
     <div>Place: <span id="gpsPlace">—</span></div>
     <div class="gps-legend"><small>Accuracy circle shown on map</small></div>
   `;
-  // prevent map interactions when hovering the control
   L.DomEvent.disableClickPropagation(div);
   return div;
 };
@@ -131,13 +130,12 @@ let splits=[], lastSplit=0, lastSplitTime=0;
 let defaultStride=0.78, estimatedStride=defaultStride;
 let elevationGain=0, lastAltitude=null;
 let watchId=null;
-let recentDistances=[]; // stores {d (meters), t (ms), ts (timestamp ms)} for live pace by time-window
+let recentDistances=[];
 
-// CONFIG: tuned to avoid indoors jitter
-const LIVE_PACE_WINDOW_SEC = 10; // compute live pace based on last 10 seconds
-const MIN_MOVE_THRESHOLD_M = 1.0; // ignore movements smaller than this (meters) — raised to avoid jitter
-const MAX_VALID_SPEED_MPS = 6.0; // ignore implausible updates faster than this
-const MAX_ACCEPTABLE_ACCURACY_M = 20; // ignore updates with accuracy worse than this
+const LIVE_PACE_WINDOW_SEC = 10;
+const MIN_MOVE_THRESHOLD_M = 1.0;
+const MAX_VALID_SPEED_MPS = 6.0;
+const MAX_ACCEPTABLE_ACCURACY_M = 20;
 
 /* --------------------------
    Charts
@@ -202,7 +200,6 @@ function updateUIAll(){
   let avgPace=(blendedDistance>0)?(elapsed/60000)/(blendedDistance/1000):0;
   document.getElementById('avgpace').innerText=avgPace>0?mmssFromMinutes(avgPace):'0:00';
 
-  // Live pace: compute over last LIVE_PACE_WINDOW_SEC seconds (time-based window)
   let nowTs = Date.now();
   let windowMs = LIVE_PACE_WINDOW_SEC*1000;
   let distSum = 0, timeSum = 0;
@@ -213,7 +210,6 @@ function updateUIAll(){
       distSum += item.d;
       timeSum += item.t;
     } else {
-      // partial overlap (rare) - approximate proportion
       const overlap = Math.max(0, windowMs - (nowTs - item.ts) + item.t);
       if(overlap>0 && item.t>0){
         const frac = overlap / item.t;
@@ -225,7 +221,7 @@ function updateUIAll(){
   }
   let livePace = avgPace;
   if(distSum>0 && timeSum>0){
-    livePace = (timeSum/60000)/(distSum/1000); // min/km
+    livePace = (timeSum/60000)/(distSum/1000);
   }
   document.getElementById('livepace').innerText=livePace>0?mmssFromMinutes(livePace):'0:00';
 
@@ -240,9 +236,7 @@ function renderSplits(){
     document.getElementById('splitsList').innerHTML='<em>No splits yet</em>';
     return;
   }
-  // Build table: Distance (m) | Time (s) | Steps
   let html = '<table id="splitsTable"><thead><tr><th>Distance (m)</th><th>Time (s)</th><th>Steps</th></tr></thead><tbody>';
-  // show splits oldest first (ascending distance)
   for(let i=0;i<splits.length;i++){
     const s = splits[i];
     html += `<tr><td>${s.m}</td><td>${Math.round(s.time)}</td><td>${s.steps}</td></tr>`;
@@ -337,237 +331,94 @@ function resetRun(){ running=false; paused=false; clearInterval(timer); timer=nu
   timeChart.data.labels=[]; timeChart.data.datasets[0].data=[]; timeChart.update();
   updateUIAll(); renderSplits(); map.setView([20.5937,78.9629],5);
 
-  // remove marker/circle and reset map-info
   if(gpsMarker){ map.removeLayer(gpsMarker); gpsMarker=null; }
   if(accuracyCircle){ map.removeLayer(accuracyCircle); accuracyCircle=null; }
-  document.getElementById('gpsAccuracy').innerText='—';
-  document.getElementById('gpsStrength').innerText='—';
-  document.getElementById('gpsBadge').innerText='';
-  document.getElementById('gpsBadge').className='gps-badge';
-  document.getElementById('gpsPlace').innerText='—';
-}
-
-function setupMotionListener(){ try{ if(typeof DeviceMotionEvent!=='undefined' && typeof DeviceMotionEvent.requestPermission==='function'){ DeviceMotionEvent.requestPermission().then(res=>{ if(res==='granted') window.addEventListener('devicemotion', handleMotion); }); } else window.addEventListener('devicemotion', handleMotion); }catch(e){ console.warn(e); } }
-function removeMotionListener(){ try{ window.removeEventListener('devicemotion', handleMotion); }catch(e){} }
-function setupGeolocationWatch(){ if(!navigator.geolocation) return; if(watchId!==null){ try{ navigator.geolocation.clearWatch(watchId); }catch(e){} watchId=null; } watchId=navigator.geolocation.watchPosition(onPosition,onError,{enableHighAccuracy:true,maximumAge:1000,timeout:10000}); }
-function clearGeoWatch(){ if(watchId!==null && navigator.geolocation){ try{ navigator.geolocation.clearWatch(watchId); }catch(e){} watchId=null; }}
-
-/* --------------------------
-   Reverse geocode (Nominatim)
--------------------------- */
-function reverseGeocode(lat, lon){
-  const now = Date.now();
-  if(now - lastReverseGeocodeTs < REVERSE_GEOCODE_MIN_MS) return; // basic throttle
-  lastReverseGeocodeTs = now;
-  // Nominatim reverse geocode (free/open). Keep requests limited.
-  const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}`;
-  fetch(url, { headers: { 'Accept': 'application/json' } })
-    .then(r=>r.ok? r.json() : Promise.reject('no-rev'))
-    .then(data=>{
-      let place = 'Unknown';
-      if(data && data.address){
-        // prefer city, town, village, then suburb/locality, then county
-        place = data.address.city || data.address.town || data.address.village || data.address.suburb || data.address.locality || data.address.county || data.display_name || 'Unknown';
-      } else if(data && data.display_name) place = data.display_name;
-      document.getElementById('gpsPlace').innerText = place;
-    }).catch(err=>{
-      // silently ignore reverse-geocode errors (rate-limits etc)
-      // console.warn('reverse geocode failed', err);
-    });
 }
 
 /* --------------------------
-   GPS / splits (improved precise 100m splits + interpolation)
+   Motion listener
 -------------------------- */
+function setupMotionListener(){ window.addEventListener('devicemotion',handleMotion); }
+function removeMotionListener(){ window.removeEventListener('devicemotion',handleMotion); }
+
+/* --------------------------
+   GPS
+-------------------------- */
+function setupGeolocationWatch(){
+  if(!navigator.geolocation) return alert('Geolocation not supported');
+  watchId=navigator.geolocation.watchPosition(onPosition,onPositionError,{ enableHighAccuracy:true, maximumAge:500, timeout:5000 });
+}
+function clearGeoWatch(){ if(watchId!==null){ navigator.geolocation.clearWatch(watchId); watchId=null; } }
+
 function onPosition(pos){
-  const lat=pos.coords.latitude, lon=pos.coords.longitude, now=Date.now();
+  if(!pos || !pos.coords) return;
+  const lat=pos.coords.latitude, lon=pos.coords.longitude, acc=pos.coords.accuracy||0, alt=pos.coords.altitude;
+  const now=Date.now();
 
-  // Update map marker & accuracy circle & GPS UI
-  const acc = (typeof pos.coords.accuracy === 'number') ? pos.coords.accuracy : null;
-  updateMapLocation(lat, lon, acc);
-
-  // Reject very inaccurate readings (helps stop indoor drift)
-  if(typeof pos.coords.accuracy === 'number' && pos.coords.accuracy > MAX_ACCEPTABLE_ACCURACY_M){
-    // don't update lastPos — ignore this noisy sample entirely
-    // still show accuracy info on UI
-    document.getElementById('gpsAccuracy').innerText = (acc !== null ? acc.toFixed(1) : '—');
-    const st = getStrengthLabelFromAccuracy(acc);
-    document.getElementById('gpsStrength').innerText = st.label;
-    const badge = document.getElementById('gpsBadge');
-    badge.innerText = st.label;
-    badge.className = 'gps-badge ' + (st.cls || '');
-    return;
-  }
-
-  if(typeof pos.coords.altitude==='number'){
-    if(lastAltitude===null) lastAltitude=pos.coords.altitude;
-    if(pos.coords.altitude>lastAltitude) elevationGain+=pos.coords.altitude-lastAltitude;
-    lastAltitude=pos.coords.altitude;
-  }
-
-  if(!lastPos){
-    lastPos={lat,lon}; lastUpdateTime=now; path.addLatLng([lat,lon]);
-    map.setView([lat,lon],16); map.invalidateSize();
-    // initialize prev timing counters
-    prevBlendedDistance = blendedDistance;
-    prevElapsedTime = elapsed/1000;
-    prevStepCount = stepCount;
-    lastSplitTime = elapsed/1000;
-    // push a tiny recentDistances item so live-pace has consistent timeline
-    recentDistances.push({d:0, t:1, ts: now});
-    // update UI
-    document.getElementById('gpsAccuracy').innerText = (acc !== null ? acc.toFixed(1) : '—');
-    const st = getStrengthLabelFromAccuracy(acc);
-    document.getElementById('gpsStrength').innerText = st.label;
-    const badge = document.getElementById('gpsBadge');
-    badge.innerText = st.label;
-    badge.className = 'gps-badge ' + (st.cls || '');
-    reverseGeocode(lat, lon);
-    updateUIAll();
-    return;
-  }
-
-  // store previous snapshot for interpolation
-  prevBlendedDistance = blendedDistance;
-  prevElapsedTime = elapsed/1000;
-  prevStepCount = stepCount;
-
-  let d = haversine_m(lastPos.lat,lastPos.lon,lat,lon);
-  let deltaT = Math.max((now - lastUpdateTime)/1000, 0.001);
-  let speed = d / deltaT;
-
-  // filter out very small jitter or implausible jumps:
-  if(d < MIN_MOVE_THRESHOLD_M || speed > MAX_VALID_SPEED_MPS){
-    // treat as zero movement but keep timeline consistent to compute live pace
-    recentDistances.push({d:0, t: deltaT*1000, ts: now});
-    if(recentDistances.length>500) recentDistances.shift();
-    // update lastPos to current to avoid accumulating jitter from old point
-    lastPos = {lat,lon};
-    lastUpdateTime = now;
-    // still update UI so user sees stable values
-    document.getElementById('gpsAccuracy').innerText = (acc !== null ? acc.toFixed(1) : '—');
-    const st = getStrengthLabelFromAccuracy(acc);
-    document.getElementById('gpsStrength').innerText = st.label;
-    const badge = document.getElementById('gpsBadge');
-    badge.innerText = st.label;
-    badge.className = 'gps-badge ' + (st.cls || '');
-    // occasionally refresh place name
-    reverseGeocode(lat, lon);
-    updateUIAll();
-    return;
-  }
+  if(acc>MAX_ACCEPTABLE_ACCURACY_M) return;
 
   // update GPS distance & timestamps
-  gpsDistance += d;
-  lastPos = {lat,lon};
-  lastUpdateTime = now;
+  let d=0;
+  if(lastPos){
+    d = map.distance([lat,lon],[lastPos.lat,lastPos.lon]);
+    let deltaT = (now-lastUpdateTime)/1000;
+    if(deltaT>0 && d/deltaT>MAX_VALID_SPEED_MPS){ d=0; }
+    gpsDistance += d;
 
-  // estimate stride more robustly: simple smoothing using existing estimate and instantaneous
+    // --- RED PATH UPDATE ---
+    path.addLatLng([lat, lon]);  // <-- this is the fix: updates red path on every valid GPS point
+  } else {
+    // first point
+    gpsMarker = L.marker([lat,lon]).addTo(map);
+    path.addLatLng([lat, lon]);
+    map.setView([lat,lon],16);
+  }
+
+  lastPos={lat,lon}; lastUpdateTime=now;
+
+  // elevation gain
+  if(alt!==null && lastAltitude!==null){
+    const diff = alt-lastAltitude;
+    if(diff>0) elevationGain += diff;
+  }
+  if(alt!==null) lastAltitude=alt;
+
+  // estimate stride
   if(stepCount>0){
     let instStride = gpsDistance/stepCount;
     instStride = Math.max(0.3, Math.min(2.5, instStride));
     estimatedStride = estimatedStride*0.85 + instStride*0.15;
-  } else {
-    estimatedStride = defaultStride;
-  }
+  } else estimatedStride=defaultStride;
 
-  // blendedDistance: choose sensible combination (prefer GPS but fallback to steps*stride)
+  // blended distance
   blendedDistance = Math.max(gpsDistance, stepCount*estimatedStride);
 
-  // store recent distance segment for live pace window (in ms)
-  recentDistances.push({d: d, t: deltaT*1000, ts: now});
+  // recent distance array for live pace
+  let deltaT=(lastUpdateTime-prevUpdateTime)/1000||1;
+  recentDistances.push({d:d, t:deltaT*1000, ts:now});
   if(recentDistances.length>500) recentDistances.shift();
 
-  // PRECISE 100m split handling:
-  let prevDist = prevBlendedDistance;
-  let currDist = blendedDistance;
-  let currTime = elapsed/1000; // seconds
-  const segmentDist = currDist - prevDist;
-  const segmentTime = currTime - prevElapsedTime;
-  const segmentSteps = stepCount - prevStepCount;
+  // update marker & accuracy
+  if(gpsMarker) gpsMarker.setLatLng([lat,lon]);
+  if(!accuracyCircle) accuracyCircle = L.circle([lat,lon], { radius: acc, color:'#3498db', fillColor:'#3498db', fillOpacity:0.1 }).addTo(map);
+  else accuracyCircle.setLatLng([lat,lon]).setRadius(acc);
 
-  if(segmentDist > 0.0001){
-    let nextTarget = Math.floor(lastSplit/100 + 1) * 100;
-    while(nextTarget <= Math.floor(currDist)){
-      const neededFromPrev = nextTarget - prevDist;
-      const ratio = Math.max(0, Math.min(1, neededFromPrev / segmentDist));
-      const splitAbsoluteTime = prevElapsedTime + ratio * segmentTime; // seconds
-      const stepsAtTarget = prevStepCount + Math.round(ratio * segmentSteps);
-      const splitDuration = Math.max(0.0001, splitAbsoluteTime - lastSplitTime);
-      const splitSteps = stepsAtTarget - (splits.length>0 ? splits[splits.length-1].cumulativeSteps || 0 : 0);
-      const cumulativeStepsAtTarget = stepsAtTarget;
+  // update GPS info panel
+  document.getElementById('gpsAccuracy').innerText=acc.toFixed(1);
+  const sLabel = getStrengthLabelFromAccuracy(acc);
+  const gpsBadge = document.getElementById('gpsBadge');
+  gpsBadge.className='gps-badge '+sLabel.cls; gpsBadge.innerText=sLabel.label;
+  document.getElementById('gpsStrength').innerText=sLabel.label;
 
-      splits.push({
-        m: nextTarget,
-        time: splitDuration, // SECONDS
-        steps: Math.max(0, splitSteps),
-        cumulativeSteps: cumulativeStepsAtTarget
-      });
-
-      // ensure UI updates show the new split
-      renderSplits();
-
-      // Update charts: pace for 100m split = splitDuration / 6 (min/km)
-      const paceMinPerKm = splitDuration / 6;
-      distanceChart.data.labels.push(nextTarget);
-      distanceChart.data.datasets[0].data.push(Number(paceMinPerKm.toFixed(2)));
-
-      timeChart.data.labels.push(Number((splitAbsoluteTime/60).toFixed(2)));
-      timeChart.data.datasets[0].data.push(Number(paceMinPerKm.toFixed(2)));
-
-      lastSplit = nextTarget;
-      lastSplitTime = splitAbsoluteTime;
-      nextTarget += 100;
-    }
-  }
-
-  distanceChart.update();
-  timeChart.update();
-  document.getElementById('gpsAccuracy').innerText = (acc !== null ? acc.toFixed(1) : '—');
-  const st = getStrengthLabelFromAccuracy(acc);
-  document.getElementById('gpsStrength').innerText = st.label;
-  const badge = document.getElementById('gpsBadge');
-  badge.innerText = st.label;
-  badge.className = 'gps-badge ' + (st.cls || '');
-  reverseGeocode(lat, lon);
+  // update UI
   updateUIAll();
-}
 
-function onError(e){ console.warn(e); }
-
-/* --------------------------
-   Map helpers: marker + accuracy circle
--------------------------- */
-function updateMapLocation(lat, lon, accuracy){
-  // marker
-  if(!gpsMarker){
-    gpsMarker = L.circleMarker([lat,lon], { radius:6, color:'#0066cc', fillColor:'#fff', weight:2, fillOpacity:1 }).addTo(map);
-  } else {
-    gpsMarker.setLatLng([lat,lon]);
-  }
-  // accuracy circle in meters
-  if(accuracy && !isNaN(accuracy)){
-    if(!accuracyCircle){
-      accuracyCircle = L.circle([lat,lon], { radius: accuracy, color:'#3388ff', fillColor:'#3388ff', fillOpacity:0.08, weight:1 }).addTo(map);
-    } else {
-      accuracyCircle.setLatLng([lat,lon]);
-      accuracyCircle.setRadius(accuracy);
-    }
-  } else {
-    if(accuracyCircle){ map.removeLayer(accuracyCircle); accuracyCircle=null; }
-  }
+  prevUpdateTime = now;
 }
-
-/* --------------------------
-   Utilities
--------------------------- */
-function haversine_m(lat1, lon1, lat2, lon2){
-  const R=6371000; const toRad=x=>x*Math.PI/180;
-  let dLat=toRad(lat2-lat1), dLon=toRad(lon2-lon1);
-  let a=Math.sin(dLat/2)**2+Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)**2;
-  return R*2*Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-}
+function onPositionError(err){ console.warn('GPS error',err); }
 </script>
+
 </body>
 </html>
+
 
