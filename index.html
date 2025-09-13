@@ -1,6 +1,14 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+  <!-- Google tag (gtag.js) -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-SYTLJWB819"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+  gtag('config', 'G-SYTLJWB819');
+</script>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <title>Run Tracker — Graphs & Splits</title>
@@ -107,11 +115,11 @@ gpsInfoControl = L.control({ position: 'topright' });
 gpsInfoControl.onAdd = function () {
   const div = L.DomUtil.create('div', 'map-info');
   div.innerHTML = `
-    <b></b>
-    <div>Accuracy: <span id="gpsAccuracy">—</span></div>
+    <b>GPS</b>
+    <div>Accuracy: <span id="gpsAccuracy">—</span> m <span id="gpsBadge" class="gps-badge"></span></div>
     <div>Strength: <span id="gpsStrength">—</span></div>
     <div>Place: <span id="gpsPlace">—</span></div>
-    
+    <div class="gps-legend"><small>Accuracy circle shown on map</small></div>
   `;
   // prevent map interactions when hovering the control
   L.DomEvent.disableClickPropagation(div);
@@ -461,6 +469,8 @@ function onPosition(pos){
   gpsDistance += d;
   lastPos = {lat,lon};
   lastUpdateTime = now;
+  // <-- ADDED: append accepted point to the red path so line follows user
+  path.addLatLng([lat, lon]);
 
   // estimate stride more robustly: simple smoothing using existing estimate and instantaneous
   if(stepCount>0){
@@ -512,8 +522,8 @@ function onPosition(pos){
       distanceChart.data.labels.push(nextTarget);
       distanceChart.data.datasets[0].data.push(Number(paceMinPerKm.toFixed(2)));
 
-      timeChart.data.labels.push(Number((splitAbsoluteTime/60).toFixed(2)));
-      timeChart.data.datasets[0].data.push(Number(paceMinPerKm.toFixed(2)));
+      timeChart.data.labels.push(Number((splitAbsoluteTime/60).toFixed(02)));
+      timeChart.data.datasets[0].data.push(Number(paceMinPerKm.toFixed(02)));
 
       lastSplit = nextTarget;
       lastSplitTime = splitAbsoluteTime;
@@ -570,3 +580,4 @@ function haversine_m(lat1, lon1, lat2, lon2){
 </script>
 </body>
 </html>
+
