@@ -578,6 +578,54 @@ function haversine_m(lat1, lon1, lat2, lon2){
   let a=Math.sin(dLat/2)**2+Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)**2;
   return R*2*Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
 }
+  /* --------------------------
+   Audio Reminder every minute
+-------------------------- */
+(function(){
+  let audioInterval = null;
+
+  function speak(msg){
+    const utterance = new SpeechSynthesisUtterance(msg);
+    speechSynthesis.speak(utterance);
+  }
+
+  function announceProgress(){
+    // total distance in meters
+    const totalMeters = blendedDistance ? blendedDistance.toFixed(0) : 0;
+
+    // last minute split: find the last split from 'splits' array
+    let lastSplitDuration = 60; // default 60s if no data
+    let lastSplitDistance = 0.0;
+    if(splits.length>0){
+      const last = splits[splits.length-1];
+      lastSplitDuration = last.time || 60;
+      lastSplitDistance = last.m || 0;
+    }
+    const lastMinutePace = lastSplitDistance>0 ? (lastSplitDuration/60)/(lastSplitDistance/1000) : 0;
+
+    const msg = `Distance so far: ${totalMeters} meters. Last minute average pace: ${lastMinutePace.toFixed(2)} minutes per kilometer.`;
+    speak(msg);
+  }
+
+  function startAudioReminder(){
+    if(!audioInterval) audioInterval = setInterval(announceProgress, 60000);
+  }
+
+  function stopAudioReminder(){
+    if(audioInterval){ clearInterval(audioInterval); audioInterval = null; }
+  }
+
+  // hook into existing buttons
+  const startBtn = document.getElementById('btnStart');
+  if(startBtn) startBtn.addEventListener('click', startAudioReminder);
+
+  const pauseBtn = document.getElementById('btnPause');
+  if(pauseBtn) pauseBtn.addEventListener('click', stopAudioReminder);
+
+  const resetBtn = document.getElementById('btnReset');
+  if(resetBtn) resetBtn.addEventListener('click', stopAudioReminder);
+})();
+
 </script>
 </body>
 </html>
