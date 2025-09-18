@@ -578,8 +578,8 @@ function haversine_m(lat1, lon1, lat2, lon2){
   let a=Math.sin(dLat/2)**2+Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)**2;
   return R*2*Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
 }
-  /* --------------------------
-   Audio Reminder every minute
+ /* --------------------------
+   Audio & Vibration Reminder every minute
 -------------------------- */
 (function(){
   let audioInterval = null;
@@ -587,6 +587,10 @@ function haversine_m(lat1, lon1, lat2, lon2){
   function speak(msg){
     const utterance = new SpeechSynthesisUtterance(msg);
     speechSynthesis.speak(utterance);
+    // Trigger small vibration (200ms) if supported
+    if(navigator.vibrate){
+      navigator.vibrate(200);
+    }
   }
 
   function announceProgress(){
@@ -608,7 +612,10 @@ function haversine_m(lat1, lon1, lat2, lon2){
   }
 
   function startAudioReminder(){
-    if(!audioInterval) audioInterval = setInterval(announceProgress, 60000);
+    if(!audioInterval){
+      announceProgress(); // optional: announce immediately at first start
+      audioInterval = setInterval(announceProgress, 60000);
+    }
   }
 
   function stopAudioReminder(){
@@ -625,6 +632,7 @@ function haversine_m(lat1, lon1, lat2, lon2){
   const resetBtn = document.getElementById('btnReset');
   if(resetBtn) resetBtn.addEventListener('click', stopAudioReminder);
 })();
+
 
 </script>
 </body>
